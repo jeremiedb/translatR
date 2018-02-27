@@ -1,2 +1,11 @@
-# translatR
-Lightweight tools for translation tasks with mxnet
+translatR
+================
+
+Lightweight tools for translation tasks with mxnet R.
+
+Architectures:
+
+-   RNN: LSTM/GRU, optionally bidirectional or reverse encoder, decoder without teacher
+-   CNN: vanilla CNN with residual gating
+
+Tutorial to be added to to [Examples of application of RNN](https://jeremiedb.github.io/mxnet_R_bucketing/index.html).
