@@ -33,8 +33,6 @@ source("metrics.R")
 
 ```{r}
 #buckets <- read_rds("data/buckets_en_fr_4_24.rds")
-
-#buckets <- get_bucket(bucket = 'nimus-data')
 buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_4_24.rds", bucket = "nimus-data")
 ```
 
@@ -49,12 +47,12 @@ batch_size = 128
 num_hidden = 256
 num_embed = 256
 seq_len = 24
-num_rnn_layer = 3
+num_rnn_layer = 2
 num_proj_key = NULL
 
-encode <- rnn.graph.unroll.encode(seq_len = 2, num_rnn_layer = 1, input_size = source_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
-
-graph.viz(encode)
+# encode <- rnn.graph.unroll.encode(seq_len = 2, num_rnn_layer = 1, input_size = source_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
+# 
+# graph.viz(encode)
 ```
 
 ```{r}
@@ -131,7 +129,6 @@ iter_train <- mx.io.arrayiter(data = buckets$buckets$`24`$data, label = buckets$
 iter_train$reset()
 iter_train$iter.next()
 iter_data = iter_train$value()
-dim(iter_data$label)
 ```
 
 
@@ -151,7 +148,7 @@ initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitu
 #                            clip_gradient = 1, rescale.grad=1)
 
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
-                           epsilon = 1e-8, wd = 1e-10,
+                           epsilon = 1e-8, wd = 0,
                            clip_gradient = 1, rescale.grad=1)
 
 logger <- mx.metric.logger()
@@ -162,7 +159,7 @@ system.time(
   model <- mx.model.buckets(symbol = decode,
                             train.data = iter_train, 
                             eval.data = NULL,
-                            num.round = 5, ctx = ctx, verbose = TRUE,
+                            num.round = 1, ctx = ctx, verbose = TRUE,
                             metric = mx.metric.Perplexity, 
                             optimizer = optimizer,  initializer = initializer,
                             batch.end.callback = batch.end.callback, 
@@ -177,9 +174,10 @@ mx.model.save(model = model, prefix = "models/model_euro_en_fr_rnn_1", iteration
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_en_fr_rnn_1", iteration = 0)
+model <- mx.model.load(prefix = "models/model_euro_en_fr_rnn_1", iteration = 0)
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
+setkeyv(source_dic, "word")
 setkeyv(target_dic, "word_id")
 ctx <- mx.cpu()
 
@@ -215,7 +213,7 @@ infer_helper(infer_seq = "tomorrow i want to talk about law in the parliament",
 infer_helper(infer_seq = "i am minister",
              model = model, source_dic = source_dic, target_dic = target_dic)
 
-infer_helper(infer_seq = "the parliament and the government",
+infer_helper(infer_seq = "the union and the government",
              model = model, source_dic = source_dic, target_dic = target_dic)
 
 ```
