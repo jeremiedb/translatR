@@ -10,12 +10,11 @@ library(data.table)
 library(plotly)
 library(readr)
 library(mxnet)
-library(tictoc)
 library(stringi)
 library(aws.s3)
 
-source("conv_encode.R")
-source("conv_decode.R")
+source("ConvComp-encode.R")
+source("ConvComp-decode.R")
 source("model_rnn.R")
 source("metrics.R")
 ```
@@ -28,25 +27,6 @@ buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_4_24.rds",
 ```
 
 
-```{r}
-### Validation
-# data <- buckets$buckets$`24`$data
-# label <- buckets$buckets$`24`$label
-# 
-# source_dic <- buckets$source_dic
-# target_dic <- buckets$target_dic
-# 
-# setkeyv(target_dic, "word_id")
-# setkeyv(source_dic, "word_id")
-# 
-# source_test <- data[,800001] + 1
-# source_dic[source_test]
-# 
-# target_test <- label[,800001] + 1
-# target_dic[target_test]
-```
-
-
 ### Model architecture
 
 ```{r}
@@ -54,17 +34,20 @@ source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
 batch_size = 128
-num_hidden = 256
-num_embed = 256
+num_hidden = 250
+num_embed = 200
 seq_len = 24
 
-encode <- conv.graph.encode(input_size = source_input_size, num_embed = num_embed, config = "one-to-one", loss_output = NULL, ignore_label = -1, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", data_name = "data", label_name = "dummy1")
+encode <- ConvComp.graph.encode(input_size = source_input_size, num_embed = num_embed, config = "one-to-one", loss_output = NULL, ignore_label = -1, masking = F, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", data_name = "data", label_name = "dummy1")
 
-decode <- conv.graph.decode(encode = encode, input_size = NULL, num_embed = NULL, config = "one-to-one", loss_output =  "softmax", ignore_label = 0, masking = F, num_hidden = num_hidden, dropout = 0.2, num_decode = target_input_size, prefix = "decode_", label_name = "label")
+decode <- ConvComp.graph.decode(encode = encode, input_size = NULL, num_embed = NULL, config = "one-to-one", loss_output =  "softmax", ignore_label = -1, masking = F, num_hidden = num_hidden, dropout = 0.2, num_decode = target_input_size, prefix = "decode_", label_name = "label")
 
-# graph.viz(encode, shape = c(seq_len, batch_size))
+graph.viz(encode, shape = c(seq_len, batch_size), type = "vis")
 # graph.viz(decode)
-# graph.viz(decode, shape = list(data = c(seq_len, batch_size), label = c(seq_len, batch_size)))
+# graph.viz(decode, 
+#           shape = list(data = c(seq_len, batch_size), 
+#                        label = c(seq_len, batch_size)),
+#           type = "vis")
 
 encode@.xData$arguments
 shapes = encode$infer.shape(list(data=c(seq_len, batch_size)))
@@ -79,6 +62,8 @@ shapes_arg = shapes$arg.shapes
 ### Prepare iterators 
 
 ```{r}
+# iter_train <- mx.io.bucket.iter(buckets = buckets$buckets, batch.size = batch_size, data.mask.element = 0, shuffle = F, seed = 44)
+
 iter_train <- mx.io.arrayiter(data = buckets$buckets$`24`$data, label = buckets$buckets$`24`$label, batch.size = batch_size, shuffle = F)
 
 iter_train$reset()
@@ -96,34 +81,39 @@ ctx <- mx.gpu(0)
 initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitude = 2.5)
 
 # optimizer <- mx.opt.create("rmsprop", learning.rate = 1e-3, gamma1 = 0.95, gamma2 = 0.95,
-#                            wd = 0, clip_gradient = 1, rescale.grad=1)
+#                            wd = 1e-5, clip_gradient = 1, rescale.grad=1/batch_size)
 
-# optimizer <- mx.opt.create("adadelta", rho = 0.95, epsilon = 1e-6, wd = 0,
-#                            clip_gradient = 1, rescale.grad=1)
+# optimizer <- mx.opt.create("adadelta", rho = 0.95, epsilon = 1e-6, wd = 1e-8,
+#                            clip_gradient = 1, rescale.grad=1/batch_size)
 
-# lr_scheduler = mx.lr_scheduler.FactorScheduler(step = 1000, factor_val = 0.2, stop_factor_lr = 1e-6, verbose = T)
+# lr_scheduler = mx.lr_scheduler.FactorScheduler(step = 2000, factor_val = 0.5, stop_factor_lr = 1e-6, verbose = T)
 
 # no grad rescale since using "valid" scaling option in SoftmaxOutput
 optimizer <- mx.opt.create("adam", learning.rate = 1e-3, beta1 = 0.9, beta2 = 0.999,
                            epsilon = 1e-8, wd = 0, clip_gradient = 1,
                            rescale.grad=1, lr_scheduler = NULL)
 
+# logger <- mx.metric.logger()
+# epoch.end.callback <- mx.callback.log.train.metric(period = 1)
+# batch.end.callback <- mx.callback.log.train.metric(period = 20)
 
 epoch.end.callback <- mx.callback.log.train.metric(period = 1)
 batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequency = 25)
 
+# Issue between batch 5225-5250 bsize 128 -> 668800 - 672000
 system.time(
   model <- mx.model.buckets(symbol = decode,
                             train.data = iter_train, 
                             eval.data = NULL,
                             num.round = 2, ctx = ctx, verbose = TRUE,
                             metric = mx.metric.Perplexity, 
-                            optimizer = optimizer,  initializer = initializer,
+                            optimizer = optimizer,  
+                            initializer = initializer,
                             batch.end.callback = batch.end.callback, 
                             epoch.end.callback = epoch.end.callback)
 )
 
-mx.model.save(model = model, prefix = "models/model_euro_en_fr_conv_1", iteration = 0)
+mx.model.save(model = model, prefix = "models/model_en_fr_ConvComp_1", iteration = 0)
 
 ```
 
@@ -131,7 +121,9 @@ mx.model.save(model = model, prefix = "models/model_euro_en_fr_conv_1", iteratio
 Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_euro_en_fr_conv_1", iteration = 0)
+library(stringi)
+
+model <- mx.model.load(prefix = "models/model_en_fr_ConvComp_1", iteration = 0)
 
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic

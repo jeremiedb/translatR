@@ -30,6 +30,11 @@ cat("English:\n")
 cat(paste(raw_en[1:5], collapse = "\n"))
 cat("\n\nFrench:\n")
 cat(raw_fr[1:5])
+
+cat("English:\n")
+cat(paste(raw_en[(1e6+1):(1e6+5)], collapse = "\n"))
+cat("\n\nFrench:\n")
+cat(raw_fr[(1e6+1):(1e6+5)])
 ```
 
 
