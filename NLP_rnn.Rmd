@@ -18,6 +18,7 @@ library(mxnet)
 library(stringi)
 library(aws.s3)
 
+source("RNN_cells.R")
 source("rnn_encode.R")
 source("rnn_decode.R")
 source("model_rnn.R")
@@ -43,9 +44,9 @@ buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_4_24.rds",
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 128
-num_hidden = 256
-num_embed = 256
+batch_size = 160
+num_hidden = 200
+num_embed = 200
 seq_len = 24
 num_rnn_layer = 2
 num_proj_key = NULL
@@ -56,7 +57,7 @@ num_proj_key = NULL
 ```
 
 ```{r}
-encode <- rnn.graph.unroll.encode(seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = source_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
+encode <- rnn.graph.unroll.encode(seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = source_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "straight", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
 ```
 
 
@@ -109,7 +110,7 @@ attn_param = list(key = attn_key_value$key, value = attn_key_value$value,
                   num_hidden = num_hidden, 
                   num_proj_key = num_proj_key)
 
-decode <- rnn.graph.unroll.decode(encode = encode, attn_ini = attn_ini, attention = attention, attn_param = attn_param, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = NULL, num_embed = NULL, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.2, prefix = "decode_", label_name = "label")
+decode <- rnn.graph.unroll.decode(encode = encode, attn_ini = attn_ini, attention = attention, attn_param = attn_param, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = NULL, num_embed = NULL, output_last_state = F, config = "one-to-one", cell_type = "straight", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.2, prefix = "decode_", label_name = "label")
 
 encode$arguments
 shapes = encode$infer.shape(list(data=c(seq_len, batch_size)))
@@ -136,8 +137,8 @@ iter_data = iter_train$value()
 ### Launch training
 
 ```{r, eval=FALSE}
-# ctx <- mx.cpu()
-ctx <- mx.gpu(0)
+ctx <- mx.cpu()
+# ctx <- mx.gpu(0)
 
 initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitude = 2.5)
 
@@ -149,7 +150,7 @@ initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitu
 
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
                            epsilon = 1e-8, wd = 0,
-                           clip_gradient = 1, rescale.grad=1)
+                           clip_gradient = 1, rescale.grad=1/batch_size)
 
 logger <- mx.metric.logger()
 epoch.end.callback <- mx.callback.log.train.metric(period = 1)

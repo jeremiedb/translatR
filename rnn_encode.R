@@ -67,6 +67,32 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
                    trans.i2h.bias = mx.symbol.Variable(paste0(prefix, "l", i, ".trans.i2h.bias")),
                    trans.h2h.weight = mx.symbol.Variable(paste0(prefix, "l", i, ".trans.h2h.weight")),
                    trans.h2h.bias = mx.symbol.Variable(paste0(prefix, "l", i, ".trans.h2h.bias")))
+    } else if (cell_type=="straight") {
+      cell <- list(input.weight = mx.symbol.Variable(paste0(prefix, "l", i, "input.weight")),
+                   input.bias = mx.symbol.Variable(paste0(prefix, "l", i, "input.bias")),
+                   write.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.weight")),
+                   write.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.bias")),
+                   mem.weight = mx.symbol.Variable(paste0(prefix, "l", i, "mem.weight")),
+                   mem.bias = mx.symbol.Variable(paste0(prefix, "l", i, "mem.bias")),
+                   highway.weight = mx.symbol.Variable(paste0(prefix, "l", i, "highway.weight")),
+                   highway.bias = mx.symbol.Variable(paste0(prefix, "l", i, "highway.bias")),
+                   read.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.weight")),
+                   read.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.bias")))
+    } else if (cell_type=="rich") {
+      cell <- list(input.weight = mx.symbol.Variable(paste0(prefix, "l", i, "input.weight")),
+                   input.bias = mx.symbol.Variable(paste0(prefix, "l", i, "input.bias")),
+                   mem.weight = mx.symbol.Variable(paste0(prefix, "l", i, "mem.weight")),
+                   mem.bias = mx.symbol.Variable(paste0(prefix, "l", i, "mem.bias")),
+                   write.in.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.in.weight")),
+                   write.in.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.in.bias")),
+                   write.c.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.c.weight")),
+                   write.c.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.c.bias")),
+                   highway.weight = mx.symbol.Variable(paste0(prefix, "l", i, "highway.weight")),
+                   highway.bias = mx.symbol.Variable(paste0(prefix, "l", i, "highway.bias")),
+                   read.in.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.in.weight")),
+                   read.in.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.in.bias")),
+                   read.c.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.c.weight")),
+                   read.c.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.c.bias")))
     }
     return (cell)
   })
@@ -117,9 +143,13 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
         prev.state <- last.states[[i]]
       
       if (cell_type=="lstm") {
-        cell.symbol <- mxnet:::lstm.cell
+        cell.symbol <- lstm.cell
       } else if (cell_type=="gru"){
-        cell.symbol <- mxnet:::gru.cell
+        cell.symbol <- gru.cell
+      } else if (cell_type=="straight"){
+        cell.symbol <- straight.cell
+      } else if (cell_type=="rich"){
+        cell.symbol <- rich.cell
       }
       
       next.state <- cell.symbol(num_hidden = num_hidden, 
@@ -155,9 +185,13 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
           prev.state <- last.states.rev[[i]]
         
         if (cell_type=="lstm") {
-          cell.symbol <- mxnet:::lstm.cell
+          cell.symbol <- lstm.cell
         } else if (cell_type=="gru"){
-          cell.symbol <- mxnet:::gru.cell
+          cell.symbol <- gru.cell
+        } else if (cell_type=="straight"){
+          cell.symbol <- straight.cell
+        } else if (cell_type=="rich"){
+          cell.symbol <- rich.cell
         }
         
         next.state <- cell.symbol(num_hidden = num_hidden, 
