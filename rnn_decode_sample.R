@@ -57,6 +57,32 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
                    trans.i2h.bias = mx.symbol.Variable(paste0(prefix, "l", i, ".trans.i2h.bias")),
                    trans.h2h.weight = mx.symbol.Variable(paste0(prefix, "l", i, ".trans.h2h.weight")),
                    trans.h2h.bias = mx.symbol.Variable(paste0(prefix, "l", i, ".trans.h2h.bias")))
+    } else if (cell_type=="straight") {
+      cell <- list(input.weight = mx.symbol.Variable(paste0(prefix, "l", i, "input.weight")),
+                   input.bias = mx.symbol.Variable(paste0(prefix, "l", i, "input.bias")),
+                   write.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.weight")),
+                   write.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.bias")),
+                   mem.weight = mx.symbol.Variable(paste0(prefix, "l", i, "mem.weight")),
+                   mem.bias = mx.symbol.Variable(paste0(prefix, "l", i, "mem.bias")),
+                   highway.weight = mx.symbol.Variable(paste0(prefix, "l", i, "highway.weight")),
+                   highway.bias = mx.symbol.Variable(paste0(prefix, "l", i, "highway.bias")),
+                   read.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.weight")),
+                   read.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.bias")))
+    } else if (cell_type=="rich") {
+      cell <- list(input.weight = mx.symbol.Variable(paste0(prefix, "l", i, "input.weight")),
+                   input.bias = mx.symbol.Variable(paste0(prefix, "l", i, "input.bias")),
+                   mem.weight = mx.symbol.Variable(paste0(prefix, "l", i, "mem.weight")),
+                   mem.bias = mx.symbol.Variable(paste0(prefix, "l", i, "mem.bias")),
+                   write.in.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.in.weight")),
+                   write.in.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.in.bias")),
+                   write.c.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.c.weight")),
+                   write.c.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.c.bias")),
+                   highway.weight = mx.symbol.Variable(paste0(prefix, "l", i, "highway.weight")),
+                   highway.bias = mx.symbol.Variable(paste0(prefix, "l", i, "highway.bias")),
+                   read.in.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.in.weight")),
+                   read.in.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.in.bias")),
+                   read.c.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.c.weight")),
+                   read.c.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.c.bias")))
     }
     return (cell)
   })
@@ -71,19 +97,13 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
   }
   
   # Split labels with a right and lift offset to use as input and output of the decoder
-  # data = mx.symbol.slice_axis(label, axis=0, begin=0, end=-1, name = "label_in")
-  # label = mx.symbol.slice_axis(label, axis=0, begin=1, end="None", name = "label_out")
+  data = mx.symbol.slice_axis(label, axis=1, begin = 0, end = 1, name = "label_in")
+  sample = mx.symbol.reshape(data = data, shape = -1)
   
-  # data = mx.symbol.swapaxes(data = data, dim1 = 0, dim2 = 1, name = paste0(prefix, "swap_pre"))
-  
-  # if (!is.null(num_embed)) {
-  #   data <- mx.symbol.Embedding(data = data, input_dim = input_size,
-  #                               weight=embed.weight, output_dim = num_embed, name = paste0(prefix, "embed"))
-  # }
-  
-  # data <- mx.symbol.split(data = data, axis = 0, num.outputs = seq_len, squeeze_axis = T)
+  label = mx.symbol.slice_axis(label, axis = 1, begin = 1, end = "None", name = "label_out")
   
   last.hidden <- list()
+  last.decode <- list()
   last.states <- list()
   
   ### Initial Attention
@@ -91,24 +111,28 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
     attn_vec = attn_ini
   }
   
-  for (seqidx in 1:(seq_len)) {
+  for (seqidx in 1:(seq_len - 1)) {
     
-    # replace data input by the attn context
-    # hidden <- data[[seqidx]]
-    hidden <- attn_vec
+    # hidden <- attn_vec
+    indata <- mx.symbol.Embedding(data = sample, input_dim = input_size, weight = embed.weight, 
+                                  output_dim = num_embed, name = paste0(prefix, "embed"))
     
     for (i in 1:num_rnn_layer) {
       
       if (seqidx==1) prev.state <- init.state[[i]] else prev.state <- last.states[[i]]
       
       if (cell_type=="lstm") {
-        cell.symbol <- mxnet:::lstm.cell
-      } else if (cell_type=="gru"){
-        cell.symbol <- mxnet:::gru.cell
+        cell.symbol <- lstm.cell
+      } else if (cell_type=="gru") {
+        cell.symbol <- gru.cell
+      } else if (cell_type=="straight") {
+        cell.symbol <- straight.cell
+      } else if (cell_type=="rich") {
+        cell.symbol <- rich.cell
       }
       
       next.state <- cell.symbol(num_hidden = num_hidden, 
-                                indata = hidden,
+                                indata = indata,
                                 prev.state = prev.state,
                                 param = param.cells[[i]],
                                 seqidx = seqidx, 
@@ -129,64 +153,48 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
       attn_vec = mx.symbol.FullyConnected(data = attn_vec, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>% 
         mx.symbol.tanh()
       
-      # Aggregate outputs from each timestep
-      last.hidden <- c(last.hidden, attn_vec)
-    } else last.hidden <- c(last.hidden, hidden) 
-  }
-  
-  # concat hidden units - concat seq_len blocks of dimension num_hidden x batch.size
-  concat <- mx.symbol.concat(data = last.hidden, num.args = seq_len, dim = 0, name = paste0(prefix, "concat"))
-  concat <- mx.symbol.reshape(data = concat, shape = c(num_hidden, -1, seq_len), name = paste0(prefix, "rnn_reshape"))
-  
-  if (config=="seq-to-one"){
-    
-    if (masking) mask <- mx.symbol.SequenceLast(data=concat, use.sequence.length = T, sequence_length = seq.mask, name = paste0(prefix, "mask")) else
-      mask <- mx.symbol.SequenceLast(data=concat, use.sequence.length = F, name = paste0(prefix, "mask"))
-    
-    if (!is.null(loss_output)) {
-      
-      decode <- mx.symbol.FullyConnected(data = mask,
-                                         weight = cls.weight,
-                                         bias = cls.bias,
-                                         num_hidden = num_decode,
-                                         name = paste0(prefix, "decode"))
-      
-      out <- switch(loss_output,
-                    softmax = mx.symbol.SoftmaxOutput(data=decode, label=label, use_ignore = !ignore_label == -1, ignore_label = ignore_label, name = paste0(prefix, "loss")),
-                    linear = mx.symbol.LinearRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
-                    logistic = mx.symbol.LogisticRegressionOutput(data=decode, label=label, paste0(prefix, name = "loss")),
-                    MAE = mx.symbol.MAERegressionOutput(data=decode, label=label, paste0(prefix, name = "loss"))
-      )
-    } else out <- mask
-    
-  } else if (config=="one-to-one"){
-    
-    if (masking) mask <- mx.symbol.SequenceMask(data = concat, use.sequence.length = T, sequence_length = seq.mask, value = 0, name = paste0(prefix, "mask")) else
-      mask <- mx.symbol.identity(data = concat, name = paste0(prefix, "mask"))
-    
-    mask = mx.symbol.swapaxes(data = mask, dim1 = 0, dim2 = 1, name = paste0(prefix, "swap_post"))
-    
-    if (!is.null(loss_output)) {
-      
-      mask <- mx.symbol.reshape(data = mask, shape = c(num_hidden, -1))
-      label <- mx.symbol.reshape(data = label, shape = c(-1))
-      
-      decode <- mx.symbol.FullyConnected(data = mask,
+      decode <- mx.symbol.FullyConnected(data = attn_vec,
                                          weight = cls.weight,
                                          bias = cls.bias,
                                          num_hidden = num_decode,
                                          name = paste0(prefix, "decode"),
-                                         flatten = F)
-      
-      out <- switch(loss_output,
-                    softmax = mx.symbol.SoftmaxOutput(data=decode, label=label, use_ignore = !ignore_label == -1, ignore_label = ignore_label, 
-                                                      normalization = "valid", 
-                                                      name = paste0(prefix, "loss")),
-                    linear = mx.symbol.LinearRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
-                    logistic = mx.symbol.LogisticRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
-                    MAE = mx.symbol.MAERegressionOutput(data=decode, label=label, name = paste0(prefix, "loss"))
-      )
-    } else out <- mask
+                                         flatten = T)
+    } else {
+      decode <- mx.symbol.FullyConnected(data = hidden,
+                                         weight = cls.weight,
+                                         bias = cls.bias,
+                                         num_hidden = num_decode,
+                                         name = paste0(prefix, "decode"),
+                                         flatten = T)
+    }
+    sample <- mx.symbol.argmax(decode, axis = 1, keepdims = F) - 1
+    # Aggregate outputs from each timestep
+    last.decode <- c(last.decode, decode) 
   }
+  
+  # concat hidden units - concat seq_len blocks of dimension num_hidden x batch.size
+  concat <- mx.symbol.concat(data = last.decode, num.args = seq_len - 1, dim = 0, name = paste0(prefix, "concat"))
+  mask <- mx.symbol.reshape(data = concat, shape = c(num_decode, -1, seq_len - 1), name = paste0(prefix, "rnn_reshape"))
+  
+  # if (masking) mask <- mx.symbol.SequenceMask(data = concat, use.sequence.length = T, sequence_length = seq.mask, value = 0, name = paste0(prefix, "mask")) else
+  #   mask <- mx.symbol.identity(data = concat, name = paste0(prefix, "mask"))
+  
+  mask = mx.symbol.swapaxes(data = mask, dim1 = 0, dim2 = 1, name = paste0(prefix, "swap_post"))
+  
+  if (!is.null(loss_output)) {
+    
+    mask <- mx.symbol.reshape(data = mask, shape = c(num_decode, -1))
+    label <- mx.symbol.reshape(data = label, shape = c(-1))
+    
+    out <- switch(loss_output,
+                  softmax = mx.symbol.SoftmaxOutput(data=mask, label=label, use_ignore = !ignore_label == -1, ignore_label = ignore_label, 
+                                                    normalization = "valid", 
+                                                    name = paste0(prefix, "loss")),
+                  linear = mx.symbol.LinearRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
+                  logistic = mx.symbol.LogisticRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
+                  MAE = mx.symbol.MAERegressionOutput(data=decode, label=label, name = paste0(prefix, "loss"))
+    )
+  } else out <- mask
   return(out)
 }
+

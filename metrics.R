@@ -105,3 +105,21 @@ mx.metric.logistic_acc <- mx.metric.custom("accuracy", function(label, pred) {
   res <- mx.nd.mean(label == pred)
   return(as.array(res))
 })
+
+
+#' Perplexity metric for language model
+#'
+#' @export
+mx.metric.Perplexity_offset <- mx.metric.custom("Perplexity", function(label, pred, mask_element = 0) {
+  
+  label = mx.nd.slice.axis(label, axis = 1, begin = 1, end = "None")
+  label <- mx.nd.reshape(label, shape = -1)
+  pred_probs <- mx.nd.pick(data = pred, index = label, axis = 1)
+  
+  mask <- label != mask_element
+  mask_length <- mx.nd.sum(mask)
+  
+  NLL <- -mx.nd.sum(mx.nd.log(pred_probs) * mask) / mask_length
+  res <- mx.nd.exp(NLL)
+  return(as.array(res))
+})
