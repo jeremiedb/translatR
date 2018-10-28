@@ -148,12 +148,11 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
       
       ctx_vec <- do.call(attention, args = c(list(query = hidden), attn_param))
       
-      # combine attn ctx with last hidden to form the attn vector
-      attn_vec = mx.symbol.concat(data = c(hidden, ctx_vec), num.args = 2, dim = 1)
-      attn_vec = mx.symbol.FullyConnected(data = attn_vec, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>% 
-        mx.symbol.tanh()
-      
-      decode <- mx.symbol.FullyConnected(data = attn_vec,
+      # combine ctx with last hidden to form the attn vector
+      attn_vector = mx.symbol.concat(data = c(hidden, ctx_vec), num.args = 2, dim = 1)
+      attn_vector = mx.symbol.FullyConnected(data = attn_vector, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>% 
+        mx.symbol.relu()
+      decode <- mx.symbol.FullyConnected(data = attn_vector,
                                          weight = cls.weight,
                                          bias = cls.bias,
                                          num_hidden = num_decode,
@@ -167,7 +166,11 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
                                          name = paste0(prefix, "decode"),
                                          flatten = T)
     }
-    sample <- mx.symbol.argmax(decode, axis = 1, keepdims = F) - 1
+    
+    # argmax or multinomial sample
+    sample <- mx.symbol.argmax(decode, axis = 1, keepdims = F)
+    # sample <- mx.symbol.argmax(decode, axis = 1, keepdims = F)
+    
     # Aggregate outputs from each timestep
     last.decode <- c(last.decode, decode) 
   }

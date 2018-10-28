@@ -3,6 +3,8 @@ title: "Corpus preprocessing for translation"
 output:
   html_document:
     theme: paper
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -13,6 +15,7 @@ library(mxnet)
 library(stringr)
 library(stringi)
 library(plotly)
+library(fst)
 ```
 
 
@@ -20,14 +23,23 @@ library(plotly)
 
 Source: (http://www.statmt.org/wmt14/translation-task.html). 
 
+```{r, eval=FALSE}
+download.file(url = "http://www.statmt.org/europarl/v7/fr-en.tgz", destfile = "./data/europarl_fr-en.tgz")
+untar(tarfile = "./data/europarl_fr-en.tgz", exdir = "./data/")
+```
+
+
 ```{r}
-raw_en <- read_lines("training/training-parallel-europarl-v7/europarl-v7.fr-en.en")
-raw_fr <- read_lines("training/training-parallel-europarl-v7/europarl-v7.fr-en.fr")
+raw_en <- read_lines("data/europarl-v7.fr-en.en")
+raw_fr <- read_lines("data/europarl-v7.fr-en.fr")
 ```
 
 ```{r}
 raw_en[1:5]
 raw_fr[1:5]
+
+raw_en[1282000:1282005]
+raw_fr[1282000:1282005]
 ```
 
 
@@ -41,16 +53,40 @@ raw_fr[1:5]
 
 
 ```{r}
+# look for special characters
+special_en <- grep(pattern = "<|>", x = raw_en)
+special_fr <- grep(pattern = "<|>", x = raw_fr)
 
-corpus_pre_process <- function(source, target, min_seq_len=1, max_seq_len=50, word_count_min = 20, dic = NULL) {
+raw_en[special_en]
+raw_fr[special_en]
+
+raw_en[special_fr]
+raw_fr[special_fr]
+```
+
+
+```{r}
+
+corpus_pre_process <- function(source, 
+                               target, 
+                               min_seq_len, 
+                               max_seq_len,
+                               min_seq_ratio = -Inf,
+                               max_seq_ratio = Inf,
+                               word_count_min = 10, 
+                               dic = NULL) {
   
-  # do not convert to ascii because acceted words will be split by the tokenizer
+  # do not convert to ascii because accented words will be split by the tokenizer
   # head(raw_vec)
   # raw_vec <-  ::stri_en   stri_enc_toascii(str = raw_vec)
   
   # string pre-process
   source <- stringi::stri_trans_tolower(source)
   target <- stringi::stri_trans_tolower(target)
+  
+  # split word with tild
+  source <- gsub(pattern = "'", replacement = "' ", x = source)
+  target <- gsub(pattern = "'", replacement = "' ", x = target)
   
   # add  <BOS> and <EOS> token indicators
   source <- paste("<BOS>", source, "<EOS>")
@@ -74,9 +110,11 @@ corpus_pre_process <- function(source, target, min_seq_len=1, max_seq_len=50, wo
   plot <- plot_ly(x = source_seq_length, type="histogram", name="source") %>% 
     add_trace(x = target_seq_length, name = "target")
   
-  # keep sequences meeting seq length criteria
+  # keep sequences meeting seq length and source/target ratio criterias
   seq_filter <- which(source_seq_length >= min_seq_len & target_seq_length >= min_seq_len & 
-                        source_seq_length <= max_seq_len & target_seq_length <= max_seq_len)
+                        source_seq_length <= max_seq_len & target_seq_length <= max_seq_len &
+                        target_seq_length / source_seq_length >= min_seq_ratio & 
+                        target_seq_length / source_seq_length <= max_seq_ratio)
   
   # filter seq length and word vec lists
   source_seq_length <- source_seq_length[seq_filter]
@@ -108,19 +146,19 @@ corpus_pre_process <- function(source, target, min_seq_len=1, max_seq_len=50, wo
   if (is.null(dic)) {
     
     # count number of occurence of each word in the corpus
-    source_word_count = source_dt[, .N, by=word]
-    source_dic = source_word_count[N>=word_count_min,,][order(-N)]
+    source_word_count = source_dt[, .N, by = word]
+    source_dic = source_word_count[N >= word_count_min,,][order(-N)]
     
-    target_word_count = target_dt[, .N, by=word]
-    target_dic = target_word_count[N>=word_count_min,,][order(-N)]
+    target_word_count = target_dt[, .N, by = word]
+    target_dic = target_word_count[N >= word_count_min,,][order(-N)]
     
     # add special tokens for padding - unknown words and beginning/end of sequence
     source_dic_words = c("<PAD>", "<UNKNOWN>", source_dic$word)
-    source_dic = data.table(word_id = 1:length(source_dic_words)-1, word = source_dic_words)
+    source_dic = data.table(word_id = 1:length(source_dic_words) - 1, word = source_dic_words)
     setkeyv(source_dic, "word")
     
     target_dic_words = c("<PAD>", "<UNKNOWN>", target_dic$word)
-    target_dic = data.table(word_id = 1:length(target_dic_words)-1, word = target_dic_words)
+    target_dic = data.table(word_id = 1:length(target_dic_words) - 1, word = target_dic_words)
     setkeyv(target_dic, "word")
     
   } else {
@@ -147,22 +185,28 @@ corpus_pre_process <- function(source, target, min_seq_len=1, max_seq_len=50, wo
 ```
 
 ```{r, eval = FALSE}
-preprocess_full <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 4, max_seq_len = 48, word_count_min = 8, dic = NULL)
+# preprocess_full <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 4, max_seq_len = 48, word_count_min = 20, dic = NULL)
+# write_rds(preprocess_full, path = "data/preprocess_euro_en_fr_4_48.rds")
+# 
+# preprocess <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 25, max_seq_len = 48, word_count_min = 20, dic = preprocess_full$dic)
+# write_rds(preprocess, path = "data/preprocess_euro_en_fr_25_48.rds")
+# rm(raw_en, raw_fr, preprocess_full, preprocess)
+# gc()
 
-write_rds(preprocess_full, path = "data/preprocess_euro_en_fr_4_48.rds")
+# length 1644721
+preprocess <- corpus_pre_process(source = raw_en, 
+                                 target = raw_fr, 
+                                 min_seq_len = 10, 
+                                 max_seq_len = 50, 
+                                 min_seq_ratio = 0.5, 
+                                 max_seq_ratio = 2,
+                                 word_count_min = 25, 
+                                 dic = NULL)
 
-preprocess <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 4, max_seq_len = 24, word_count_min = 8, dic = preprocess_full$dic)
-
-write_rds(preprocess, path = "data/preprocess_euro_en_fr_4_24.rds")
-
+write_rds(preprocess, path = "data/preprocess_euro_en_fr_10_50.rds")
 rm(preprocess)
-gc()
-
-preprocess <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 25, max_seq_len = 48, word_count_min = 8, dic = preprocess_full$dic)
-
-write_rds(preprocess, path = "data/preprocess_euro_en_fr_25_48.rds")
-
-rm(raw_en, raw_fr, preprocess_full, preprocess)
+rm(raw_en)
+rm(raw_fr)
 gc()
 ```
 
@@ -170,7 +214,7 @@ gc()
 ### Make bucket data
 
 ```{r, eval = FALSE}
-preprocess <- read_rds(path = "data/preprocess_euro_en_fr_4_24.rds")
+preprocess <- read_rds(path = "data/preprocess_euro_en_fr_10_50.rds")
 
 create_buckets <- function(source, target, seq_len = c(225), 
                            source_align = "left", target_align = "left",
@@ -184,7 +228,7 @@ create_buckets <- function(source, target, seq_len = c(225),
   target <- dcast(data = target, seq_word_id ~ seq_id, value.var = "word_id", fill = 0)
   target <- as.matrix(target[ , c("seq_word_id") := NULL])
   
-  buckets = list("24" = list(data = source, label = target))
+  buckets = list("50" = list(data = source, label = target))
   
   return(list(buckets = buckets,
               source_dic = source_dic,
@@ -196,8 +240,8 @@ create_buckets <- function(source, target, seq_len = c(225),
 ```{r, eval = FALSE}
 buckets <- create_buckets(source = preprocess$source_dt, 
                           target = preprocess$target_dt, 
-                          source_dic = preprocess$source_dic, 
-                          target_dic = preprocess$target_dic)
-write_rds(buckets, "data/buckets_euro_en_fr_4_24.rds")
+                          source_dic = preprocess$dic$source_dic, 
+                          target_dic = preprocess$dic$target_dic)
+write_rds(buckets, "data/buckets_euro_en_fr_10_50.rds")
 ```
 

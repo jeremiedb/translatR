@@ -34,5 +34,6 @@ vignettes/*.pdf
 
 # Folder to ignore
 /data
+/data/*
 /models
 .Rproj.user

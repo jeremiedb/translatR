@@ -2,7 +2,7 @@
 mx.model.train.buckets <- function(symbol, ctx, train.data, eval.data, 
                                    dlist, arg.params, aux.params, 
                                    grad.req, arg.update.idx, 
-                                   begin.round, end.round, optimizer, metric, 
+                                   begin.round, end.round, optimizer, metric, metric_cpu, 
                                    epoch.end.callback, batch.end.callback, kvstore, verbose = TRUE) {
   
   ndevice <- length(ctx)
@@ -36,8 +36,8 @@ mx.model.train.buckets <- function(symbol, ctx, train.data, eval.data,
     update.on.kvstore <- TRUE
     kvstore$set.optimizer(optimizer)
   } else {
-    updaters <- lapply(1:ndevice, function(i) {
-      mx.opt.get.updater(optimizer, train.execs[[i]]$ref.arg.arrays)
+    updaters <- lapply(seq_len(ndevice), function(i) {
+      mx.opt.get.updater(optimizer, train.execs[[i]]$ref.arg.arrays, ctx = ctx[[i]])
     })
   }
   
@@ -71,22 +71,28 @@ mx.model.train.buckets <- function(symbol, ctx, train.data, eval.data,
                                  aux.arrays = train.execs[[i]]$ref.aux.arrays, ctx = ctx[[i]], grad.req = grad.req)
         })
       } else {
-        # train.execs <- lapply(1:ndevice, function(i) {
-        #   s <- slices[[i]]
-        #   mxnet:::mx.symbol.bind(symbol = symbol, 
-        #                          arg.arrays = c(s, train.execs[[i]]$ref.arg.arrays[arg.params.names])[arg.update.idx],
-        #                          aux.arrays = train.execs[[i]]$ref.aux.arrays, ctx = ctx[[i]], grad.req = grad.req)
-        # })
         for (i in 1:ndevice) {
           s <- slices[[i]]
           mx.exec.update.arg.arrays(train.execs[[i]], s, match.name=TRUE)
         }
       }
       
+      # forward pass
       for (texec in train.execs) {
         mx.exec.forward(texec, is.train = TRUE)
       }
       
+      # copy of preds and labels for metric
+      if (!is.null(metric)) {
+        preds <- lapply(train.execs, function(texec) {texec$ref.outputs[[1]]})
+        labels <- lapply(train.execs, function(texec) {texec$ref.arg.arrays[[input.names[length(input.names)]]]})
+        if (metric_cpu) {
+          preds <- lapply(seq_along(train.execs), function(i) {mx.nd.copyto(preds[[i]], mx.cpu())})
+          labels <- lapply(seq_along(train.execs), function(i) {mx.nd.copyto(labels[[i]], mx.cpu())})
+        }
+      }
+      
+      # backward pass
       for (texec in train.execs) {
         mx.exec.backward(texec)
       }
@@ -109,36 +115,33 @@ mx.model.train.buckets <- function(symbol, ctx, train.data, eval.data,
             texec$ref.grad.arrays[params.index]
           }), -params.index)
         }
-        arg.blocks <- lapply(1:ndevice, function(i) {
+        arg.blocks <- lapply(seq_len(ndevice), function(i) {
           updaters[[i]](train.execs[[i]]$ref.arg.arrays, train.execs[[i]]$ref.grad.arrays)
         })
-        for (i in 1:ndevice) {
+        for (i in seq_len(ndevice)) {
           mx.exec.update.arg.arrays(train.execs[[i]], arg.blocks[[i]], skip.null = TRUE)
         }
       }
       
       # Update the evaluation metrics
       if (!is.null(metric)) {
-        for (i in 1:ndevice) {
-          train.metric <- metric$update(label = train.execs[[i]]$ref.arg.arrays[[input.names[length(input.names)]]], 
-                                        pred = train.execs[[i]]$ref.outputs[[1]], 
+        for (i in seq_len(ndevice)) {
+          train.metric <- metric$update(label = labels[[i]],
+                                        pred = preds[[i]],
                                         state = train.metric)
         }
       }
       
-      
       if (!is.null(batch.end.callback)) {
         batch.end.callback(iteration, nbatch, environment())
       }
-      
-      nbatch <- nbatch + 1
-      
-      if (nbatch %% 5 == 0) gc()
-      # if (nbatch %% 50 == 0) print(nbatch)
-      
+    
+      # if (nbatch %% 5 == 0) gc()
       if (nbatch %% 250 == 0 & !is.null(metric)) {
         train.metric <- metric$init()
       }
+      
+      nbatch <- nbatch + 1
       
     }
     
@@ -240,7 +243,7 @@ mx.model.buckets <- function(symbol, train.data, eval.data = NULL, metric = NULL
                              num.round = 1, begin.round = 1, 
                              initializer = mx.init.uniform(0.01), optimizer = "sgd", ctx = NULL, 
                              batch.end.callback = NULL, epoch.end.callback = NULL, 
-                             kvstore = "local", verbose = TRUE) {
+                             kvstore = "local", verbose = TRUE, metric_cpu = FALSE) {
   
   if (!train.data$iter.next()) {
     train.data$reset()
@@ -341,7 +344,7 @@ mx.model.buckets <- function(symbol, train.data, eval.data = NULL, metric = NULL
                                   optimizer = optimizer, metric = metric, 
                                   begin.round = begin.round, end.round = num.round, 
                                   batch.end.callback = batch.end.callback, epoch.end.callback = epoch.end.callback, 
-                                  kvstore = kvstore, verbose = verbose)
+                                  kvstore = kvstore, verbose = verbose, metric_cpu = metric_cpu)
   
   return(model)
 }

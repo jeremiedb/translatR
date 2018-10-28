@@ -239,55 +239,14 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
     concat <- concat + concat_rev
   }
   
-  if (config=="seq-to-one") {
-    
-    if (masking) {
-      mask <- mx.symbol.SequenceLast(data=concat, use.sequence.length = T, sequence_length = seq.mask, name = paste0(prefix, "mask")) 
-    } else mask <- mx.symbol.SequenceLast(data=concat, use.sequence.length = F, name = paste0(prefix, "mask"))
-    
-    if (!is.null(loss_output)) {
-      
-      decode <- mx.symbol.FullyConnected(data = mask,
-                                         weight = cls.weight,
-                                         bias = cls.bias,
-                                         num_hidden = num_decode,
-                                         name = paste0(prefix, "decode"))
-      
-      out <- switch(loss_output,
-                    softmax = mx.symbol.SoftmaxOutput(data=decode, label=label, use_ignore = !ignore_label == -1, ignore_label = ignore_label, name = paste0(prefix, "loss")),
-                    linear = mx.symbol.LinearRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
-                    logistic = mx.symbol.LogisticRegressionOutput(data=decode, label=label, paste0(prefix, name = "loss")),
-                    MAE = mx.symbol.MAERegressionOutput(data=decode, label=label, paste0(prefix, name = "loss"))
-      )
-    } else out <- mask
-    
-  } else if (config=="one-to-one"){
-    
-    if (masking) {
-      mask <- mx.symbol.SequenceMask(data = concat, use.sequence.length = T, sequence_length = seq.mask, value = 0, name = paste0(prefix, "mask"))
-    } else mask <- mx.symbol.identity(data = concat, name = paste0(prefix, "mask"))
-    
-    mask = mx.symbol.swapaxes(data = mask, dim1 = 0, dim2 = 1, name = paste0(prefix, "swap_post"))
-    
-    if (!is.null(loss_output)) {
-      
-      mask <- mx.symbol.reshape(data = mask, shape = c(0, -1), reverse = TRUE)
-      label <- mx.symbol.reshape(data = label, shape = c(-1))
-      
-      decode <- mx.symbol.FullyConnected(data = mask, weight = cls.weight, bias = cls.bias, num_hidden = num_decode, 
-                                         flatten = T, name = paste0(prefix, "decode"))
-      
-      out <- switch(loss_output,
-                    softmax = mx.symbol.SoftmaxOutput(data=decode, label=label, use_ignore = !ignore_label == -1, ignore_label = ignore_label, 
-                                                      name = paste0(prefix, "loss")),
-                    linear = mx.symbol.LinearRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
-                    logistic = mx.symbol.LogisticRegressionOutput(data=decode, label=label, name = paste0(prefix, "loss")),
-                    MAE = mx.symbol.MAERegressionOutput(data=decode, label=label, name = paste0(prefix, "loss"))
-      )
-    } else out <- mask
-  }
+  if (masking) {
+    mask <- mx.symbol.SequenceMask(data = concat, use.sequence.length = T, sequence_length = seq.mask, value = 0, name = paste0(prefix, "mask"))
+  } else mask <- mx.symbol.identity(data = concat, name = paste0(prefix, "mask"))
+  
+  value <- mx.symbol.swapaxes(data = mask, dim1 = 0, dim2 = 1, name = paste0(prefix, "value"))
   
   if (output_last_state) {
-    return(mx.symbol.Group(c(out, out.states)))
-  } else return(out)
+    return(mx.symbol.Group(c(value, out.states)))
+  } else return(value)
+  
 }

@@ -78,6 +78,7 @@ mx.metric.Perplexity <- mx.metric.custom("Perplexity", function(label, pred, mas
   
   label <- mx.nd.reshape(label, shape = -1)
   pred_probs <- mx.nd.pick(data = pred, index = label, axis = 1)
+  pred_probs <- mx.nd.clip(pred_probs, a_min = 1e-15, a_max = 1-1e-15)
   
   mask <- label != mask_element
   mask_length <- mx.nd.sum(mask)
@@ -115,6 +116,7 @@ mx.metric.Perplexity_offset <- mx.metric.custom("Perplexity", function(label, pr
   label = mx.nd.slice.axis(label, axis = 1, begin = 1, end = "None")
   label <- mx.nd.reshape(label, shape = -1)
   pred_probs <- mx.nd.pick(data = pred, index = label, axis = 1)
+  pred_probs <- mx.nd.clip(pred_probs, a_min = 1e-15, a_max = 1-1e-15)
   
   mask <- label != mask_element
   mask_length <- mx.nd.sum(mask)
