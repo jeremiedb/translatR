@@ -45,19 +45,15 @@ source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
 batch_size = 128
-num_hidden = 256
-num_embed = 256
+num_hidden = 224
+num_embed = 224
 seq_len = 50
 num_rnn_layer = 3
 num_proj_key = NULL
-
-# encode <- rnn.graph.unroll.encode(seq_len = 2, num_rnn_layer = 1, input_size = source_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
-# 
-# graph.viz(encode)
 ```
 
 ```{r}
-encode <- rnn.graph.unroll.encode(seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = source_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.1, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
+encode <- rnn.graph.unroll.encode(seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = source_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.05, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
 ```
 
 
@@ -107,17 +103,21 @@ Attention functions return two functions:
  - attend() function to be called each time an attention query is performed during decoding. 
 
 ```{r}
-attn <- attn_dot(value = encode, query_key_size = num_hidden, scale = T)
-attn_init <- attn$init()
+# attn <- attn_dot(value = encode, query_key_size = num_hidden, scale = T)
+attn <- attn_mlp(value = encode, query_key_size = num_hidden, scale = T)
 
 # no masking - handled implicitly thourgh the ignore label of softmax
-decode <- rnn.graph.unroll.decode(attn_init = attn_init, attend = attn$attend, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, config = "one-to-one", cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label")
+decode_teacher <- rnn.graph.unroll.decode(mode = "argmax", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.05, prefix = "decode_", label_name = "label")
+
+decode_argmax <- rnn.graph.unroll.decode(mode = "argmax", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.05, prefix = "decode_", label_name = "label")
+
+decode_sample <- rnn.graph.unroll.decode(mode = "sample", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.05, prefix = "decode_", label_name = "label")
 
 encode$arguments
 shapes = encode$infer.shape(list(data=c(seq_len, batch_size)))
 
-decode$arguments
-shapes <- decode$infer.shape(list(data=c(seq_len, batch_size), label=c(seq_len, batch_size)))
+decode_sample$arguments
+shapes <- decode_sample$infer.shape(list(data=c(seq_len, batch_size), label=c(seq_len, batch_size)))
 
 shapes_out = shapes$out.shapes
 shapes_arg = shapes$arg.shapes
@@ -135,14 +135,13 @@ iter_data = iter_train$value()
 
 ```{r}
 # perplexity jumps in the last records - to be investigated
-# 128 * 9925
-# 128 * 9950
-# 128 * 10000
-# 128 * 10025
+# 1 248 000 - 1 251 200
 # potential buggy records between 1 270 400 and 1 272 000 and 1 280 000 and 1 283 200
 # dim(buckets$buckets$`50`$data[, -(1248000:1272000)])
 # dim(buckets$buckets$`50`$label[, -(1248000:1272000)])
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data[, -(1248000:1272000)], label = buckets$buckets$`50`$label[, -(1248000:1272000)], batch.size = batch_size, shuffle = F)
+# iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data[, -(1248000:1272000)], label = buckets$buckets$`50`$label[, -(1248000:1272000)], batch.size = batch_size, shuffle = F)
+
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data[, 1:1200000], label = buckets$buckets$`50`$label[, 1:1200000], batch.size = batch_size, shuffle = F)
 
 iter_train$reset()
 iter_train$iter.next()
@@ -165,38 +164,41 @@ initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitu
 # optimizer <- mx.opt.create("adadelta", rho = 0.95, epsilon = 1e-8, wd = 1e-8,
 #                            clip_gradient = 1, rescale.grad=1)
 
+lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 2000, factor_val = 0.8, stop_factor_lr = 5e-5)
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
-                           epsilon = 1e-8, wd = 1e-8,
-                           clip_gradient = 1, rescale.grad = 1)
+                           epsilon = 1e-8, wd = 0,
+                           clip_gradient = 1, rescale.grad = 1, lr_scheduler = lr_scheduler)
 
 logger <- mx.metric.logger()
 epoch.end.callback <- mx.callback.log.train.metric(period = 1)
 batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequency = 25)
 
-system.time(
-  model <- mx.model.buckets(symbol = decode,
-                            train.data = iter_train, 
-                            eval.data = NULL,
-                            num.round = 1, ctx = ctx, verbose = TRUE,
-                            metric = mx.metric.Perplexity, 
-                            optimizer = optimizer,  initializer = initializer,
-                            batch.end.callback = batch.end.callback, 
-                            epoch.end.callback = epoch.end.callback)
-)
+model <- mx.model.buckets(symbol = decode_sample,
+                          train.data = iter_train, 
+                          eval.data = NULL,
+                          num.round = 3, ctx = ctx, verbose = TRUE,
+                          metric = mx.metric.Perplexity, 
+                          optimizer = optimizer,  initializer = initializer,
+                          batch.end.callback = batch.end.callback, 
+                          epoch.end.callback = epoch.end.callback)
 
-mx.model.save(model = model, prefix = "models/model_euro_en_fr_rnn_1", iteration = 0)
+mx.model.save(model = model, prefix = "models/model_euro_en_fr_rnn_sample_v1", iteration = 3)
 ```
 
 
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_euro_en_fr_rnn_1", iteration = 0)
+model <- mx.model.load(prefix = "models/model_euro_en_fr_rnn_1", iteration = 2)
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
+target_dic[, word_id_char := as.character(word_id)]
 setkeyv(source_dic, "word")
-setkeyv(target_dic, "word_id")
+setkeyv(target_dic, "word_id_char")
 ctx <- mx.cpu()
+
+model_infer <- list(symbol = decode_infer, arg.params = model$arg.params, aux.params = model$aux.params)
+model_infer <- structure(model_infer, class="MXFeedForwardModel")
 
 infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   
@@ -209,29 +211,33 @@ infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   infer_seq <- data.table(t(infer_seq))
   infer_dt <- source_dic[infer_seq]
   
-  infer_mat <- matrix(0, nrow = 50, ncol = 1)
-  infer_mat[1:length(infer_dt$word_id), 1] <- infer_dt$word_id
+  zeros <- matrix(0, nrow = 50, ncol = 1)
+  data <- zeros
+  data[1:length(infer_dt$word_id), 1] <- infer_dt$word_id
   
-  iter_infer <- mx.io.arrayiter(data = infer_mat, label = infer_mat, batch.size = 1, shuffle = F)
+  iter_infer <- mx.io.arrayiter(data = data, label = data, batch.size = 1, shuffle = F)
   
   infer_pred <- mx.infer.rnn(infer.data = iter_infer, model = model, ctx = ctx)
-  dim(infer_pred)
+  # dim(infer_pred)
   
   infer_nd <- mx.nd.array(infer_pred)
   infer_max <- as.array(mx.nd.argmax(infer_nd, axis = 1))
   
-  translation <- target_dic[infer_max + 1]
-  return(translation)
+  translation <- target_dic[as.character(infer_max)]
+  return(list(data = data, translation = translation))
 }
 
 infer_helper(infer_seq = "tomorrow i want to talk about law in the parliament",
              model = model, source_dic = source_dic, target_dic = target_dic)
 
+infer_helper(infer_seq = "tomorrow i want to talk about law in the parliament",
+             model = model_infer, source_dic = source_dic, target_dic = target_dic)
+
 infer_helper(infer_seq = "i am minister",
-             model = model, source_dic = source_dic, target_dic = target_dic)
+             model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
 infer_helper(infer_seq = "the union and the government",
-             model = model, source_dic = source_dic, target_dic = target_dic)
+             model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
 ```
 

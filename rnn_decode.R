@@ -2,9 +2,9 @@
 #' unroll representation of RNN running on non CUDA device with attention
 #' 
 #' @export
-rnn.graph.unroll.decode <- function(num_rnn_layer, 
-                                    attn_init,
-                                    attend,
+rnn.graph.unroll.decode <- function(mode = "train",
+                                    num_rnn_layer, 
+                                    attn,
                                     seq_len, 
                                     input_size = NULL,
                                     num_embed = NULL, 
@@ -14,7 +14,6 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
                                     ignore_label = -1,
                                     loss_output = NULL, 
                                     init.state = NULL,
-                                    config,
                                     cell_type = "lstm", 
                                     masking = F, 
                                     output_last_state = F,
@@ -25,6 +24,9 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
   # attention weights
   attn.weight <- mx.symbol.Variable(paste0(prefix, "attn.weight"))
   attn.bias <- mx.symbol.Variable(paste0(prefix, "attn.bias"))
+  
+  attn_init <- attn$init()
+  attend <- attn$attend
   
   # Initial attn parameters - shape: num_hidden_encode
   # decode.init.weight = mx.symbol.Variable("decode.init.weight")
@@ -89,10 +91,10 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
   if (!is.null(num_embed)) embed_weight <- mx.symbol.Variable("embed_weight")
   
   # set inital input data
-  data <- mx.symbol.slice_axis(label, axis = 1, begin = 0, end = 1, name = "data_ini")
-  data <- mx.symbol.reshape(data = data, shape = -1)
-  hidden <- mx.symbol.Embedding(data = data, input_dim = 1, weight = embed_ini_weight, 
-                                output_dim =  num_hidden + num_embed, name = paste0(prefix, "embed"))
+  hidden <- mx.symbol.slice_axis(label, axis = 1, begin = 0, end = 1, name = "data_ini")
+  hidden <- mx.symbol.reshape(data = hidden, shape = -1)
+  hidden <- mx.symbol.Embedding(data = hidden, input_dim = 1, weight = embed_ini_weight, 
+                                output_dim =  num_hidden + num_embed, name = paste0(prefix, "embed_ini"))
   
   if (masking) {
     seq.mask <- mxnet:::mx.varg.symbol.internal.not_equal_scalar(alist = list(data=label, scalar = 0))
@@ -100,7 +102,8 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
   }
   
   # Split labels with a right and lift offset to use as input and output of the decoder
-  # data = mx.symbol.slice_axis(label, axis=0, begin=0, end=-1, name = "label_in")
+  data <- mx.symbol.slice_axis(label, axis = 1, begin=0, end=-1)
+  data <- mx.symbol.split(data, num_outputs = seq_len - 1, axis = 1, squeeze_axis = T)
   # label = mx.symbol.slice_axis(label, axis=0, begin=1, end="None", name = "label_out")
   
   last.decode <- list()
@@ -135,11 +138,11 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
     }
     
     ### Attention
-    ctx_vector <- attn$attend(query = hidden, key = attn_init$key, value = attn_init$value, query_weight = attn_init$query_weight)
+    ctx_vector <- attn$attend(query = hidden, key = attn_init$key, value = attn_init$value, attn_init = attn_init)
     
     # combine context vector with last hidden to form the attn vector
     hidden <- mx.symbol.concat(data = c(hidden, ctx_vector), num.args = 2, dim = -1)
-    hidden <- mx.symbol.FullyConnected(data = hidden, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>% 
+    hidden <- mx.symbol.FullyConnected(data = hidden, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F, name = paste0(prefix, "attn_FC")) %>% 
       mx.symbol.tanh()
     
     decode <- mx.symbol.FullyConnected(data = hidden,
@@ -149,14 +152,28 @@ rnn.graph.unroll.decode <- function(num_rnn_layer,
                                        name = paste0(prefix, "decode"),
                                        flatten = T)
     
-    # Sample selected token - argmax or multinomial sample
-    sample <- mx.symbol.argmax(decode, axis = 1, keepdims = F)
-    sample <- mx.symbol.Embedding(data = sample, input_dim = input_size, weight = embed_weight, 
-                                  output_dim = num_embed, name = paste0(prefix, "embed"))
-    hidden <- mx.symbol.concat(data = c(hidden, sample), num.args = 2, dim = -1)
-    
     # Aggregate outputs from each timestep
     last.decode <- c(last.decode, decode)
+    
+    if (i < seq_len) {
+      
+      if (mode == "argmax") {
+        # Argmax token selection
+        sample <- mx.symbol.argmax(decode, axis = 1, keepdims = F)
+        sample <- mx.symbol.Embedding(data = sample, input_dim = input_size, weight = embed_weight,
+                                      output_dim = num_embed, name = paste0(prefix, "embed"))
+      } else if (mode == "sample") {
+        # Multinomial token sample
+        sample <- mx.symbol.softmax(data = decode, axis = -1)
+        sample <- mx.symbol.sample_multinomial(data = sample, get_prob = F)
+        sample <- mx.symbol.Embedding(data = sample, input_dim = input_size, weight = embed_weight,
+                                      output_dim = num_embed, name = paste0(prefix, "embed"))
+      } else if (mode == "teacher") {
+        sample <- mx.symbol.Embedding(data = mx.symbol.BlockGrad(data[[i]]), input_dim = input_size, weight = embed_weight, 
+                                      output_dim = num_embed, name = paste0(prefix, "embed"))
+      }
+      hidden <- mx.symbol.concat(data = c(hidden, sample), num.args = 2, dim = -1)
+    }
     
   }
   
