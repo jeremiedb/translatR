@@ -37,6 +37,62 @@ lstm.cell <- function(num_hidden, indata, prev.state, param, seqidx, layeridx, d
 
 
 
+# light cell symbol
+light.cell <- function(num_hidden, indata, prev.state, param, seqidx, layeridx, dropout, prefix = "") {
+  
+  if (layeridx == 1) {
+    indata <- mx.symbol.FullyConnected(data = indata, weight = param$input_weight, no_bias = T,
+                                       num_hidden = num_hidden, name = paste0(prefix, "input", "_l", layeridx, "_s", seqidx))
+    if (dropout > 0) indata <- mx.symbol.Dropout(data = indata, p = dropout)
+  }
+  
+  gate_c <- mx.symbol.FullyConnected(data = indata, weight = param$gate_c_weight, bias = param$gate_c_bias,
+                                     num_hidden = num_hidden, name = paste0(prefix, "gate_c", "_l", layeridx, "_s", seqidx))
+  
+  gate_h <- mx.symbol.FullyConnected(data = indata, weight = param$gate_h_weight, bias = param$gate_h_bias,
+                                     num_hidden = num_hidden, name = paste0(prefix, "gate_h", "_l", layeridx, "_s", seqidx))
+  
+  proj <- mx.symbol.FullyConnected(data = indata, weight = param$proj_weight, bias = param$proj_bias,
+                                   num_hidden = num_hidden, name = paste0(prefix, "proj", "_l", layeridx, "_s", seqidx))
+  
+  write <- mx.symbol.FullyConnected(data = indata, weight = param$write_weight, bias = param$write_bias,
+                                    num_hidden = num_hidden, name = paste0(prefix, "write", "_l", layeridx, "_s", seqidx))
+  
+  if (!is.null(prev.state)) {
+    gate_c_c <- mx.symbol.FullyConnected(data = prev.state$c, weight = param$gate_c_c_weight, bias = param$gate_c_c_bias,
+                                         num_hidden = num_hidden, name = paste0(prefix, "gate_c_c", "_l", layeridx, "_s", seqidx))
+    
+    gate_c_h <- mx.symbol.FullyConnected(data = prev.state$c, weight = param$gate_c_h_weight, bias = param$gate_c_h_bias,
+                                         num_hidden = num_hidden, name = paste0(prefix, "gate_c_h", "_l", layeridx, "_s", seqidx))
+    
+    proj_c <- mx.symbol.FullyConnected(data = prev.state$c, weight = param$proj_c_weight, bias = param$proj_c_bias,
+                                       num_hidden = num_hidden, name = paste0(prefix, "proj_c", "_l", layeridx, "_s", seqidx))
+    
+    write_c <- mx.symbol.FullyConnected(data = prev.state$c, weight = param$write_c_weight, bias = param$write_c_bias,
+                                        num_hidden = num_hidden, name = paste0(prefix, "write_c", "_l", layeridx, "_s", seqidx))
+    
+    gate_c <- gate_c + gate_c_c
+    gate_h <- gate_h + gate_c_h
+    proj <- proj + proj_c
+    write <- write + write_c
+  }
+  
+  gate_c <- mx.symbol.sigmoid(gate_c)
+  gate_h <- mx.symbol.sigmoid(gate_h)
+  write <- mx.symbol.tanh(write)
+  
+  if (is.null(prev.state)) {
+    next_c <- gate_c * write
+  } else {
+    next_c <- gate_c * write + (1 - gate_c) * prev.state$c
+  }
+  
+  next_h <- mx.symbol.tanh(proj)
+  
+  return(list(h = next_h, c = next_c))
+}
+
+
 # Straight cell symbol
 straight.cell <- function(num_hidden, indata, prev.state, param, seqidx, layeridx, dropout, prefix = "") {
   
@@ -54,69 +110,11 @@ straight.cell <- function(num_hidden, indata, prev.state, param, seqidx, layerid
   read <- mx.symbol.tanh(proj_full[[4]])
   highway <- mx.symbol.sigmoid(proj_full[[5]])
   
-  mem <- mx.symbol.relu(mem)
-  write <- mx.symbol.tanh(write)
-  read <- mx.symbol.sigmoid(read)
-  highway <- mx.symbol.sigmoid(highway)
-  
   if (is.null(prev.state)) {
     next.c <- write * mem
     next.h <- highway * in_proj
   } else {
     next.c <- prev.state$c + write * mem
-    next.h <- read * prev.state$c + highway * in_proj
-  }
-  return(list(h = next.h, c = next.c))
-}
-
-
-
-# Rich cell symbol
-rich.cell <- function(num_hidden, indata, prev.state, param, seqidx, layeridx, dropout, prefix = "") {
-  
-  if (layeridx == 1) {
-    in_proj <- mx.symbol.FullyConnected(data = indata, weight = param$input.weight, bias = param$input.bias,
-                                        num_hidden = num_hidden, name = paste0(prefix, "input", "_l", layeridx, "_s", seqidx))
-    if (dropout > 0)
-      in_proj <- mx.symbol.Dropout(data = in_proj, p = dropout)
-    
-  } else if (layeridx > 1) {
-    in_proj <- indata
-    # if (dropout > 0) 
-    #   in_proj <- mx.symbol.Dropout(data = in_proj, p = dropout)
-  }
-  
-  mem <- mx.symbol.FullyConnected(data = indata, weight = param$mem.weight, bias = param$mem.bias, 
-                                  num_hidden = num_hidden, name = paste0(prefix, "mem", "_l", layeridx, "_s", seqidx))
-  
-  # mem <- mx.symbol.relu(mem)
-  
-  write.in <- mx.symbol.FullyConnected(data = indata, weight = param$write.in.weight, bias = param$write.in.bias, 
-                                       num_hidden = num_hidden, name = paste0(prefix, "write.in", "_l", layeridx, "_s", seqidx))
-  
-  highway <- mx.symbol.FullyConnected(data = indata, weight = param$highway.weight, bias = param$highway.bias, 
-                                      num_hidden = num_hidden, name = paste0(prefix, "highway", "_l", layeridx, "_s", seqidx)) %>% 
-    mx.symbol.sigmoid()
-  
-  if (is.null(prev.state)) {
-    write <- mx.symbol.sigmoid(write.in)
-    next.c <- mx.symbol.relu(write * mem)
-    next.h <- highway * in_proj
-  } else {
-    
-    read.in <- mx.symbol.FullyConnected(data = indata, weight = param$read.in.weight, bias = param$read.in.bias,
-                                        num_hidden = num_hidden, name = paste0(prefix, "read.in", "_l", layeridx, "_s", seqidx))
-    
-    read.c <- mx.symbol.FullyConnected(data = prev.state$c, weight = param$read.c.weight, bias = param$read.c.bias,
-                                       num_hidden = num_hidden, name = paste0(prefix, "read.c", "_l", layeridx, "_s", seqidx))
-    
-    write.c <- mx.symbol.FullyConnected(data = prev.state$c, weight = param$write.c.weight, bias = param$write.c.bias, 
-                                        num_hidden = num_hidden, name = paste0(prefix, "write.c", "_l", layeridx, "_s", seqidx))
-    
-    read <- mx.symbol.tanh(read.in + read.c)
-    write <- mx.symbol.sigmoid(write.in + write.c)
-    
-    next.c <- mx.symbol.relu(prev.state$c + write * mem)
     next.h <- read * prev.state$c + highway * in_proj
   }
   return(list(h = next.h, c = next.c))

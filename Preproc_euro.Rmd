@@ -54,14 +54,21 @@ raw_fr[1282000:1282005]
 
 ```{r}
 # look for special characters
-special_en <- grep(pattern = "<|>", x = raw_en)
-special_fr <- grep(pattern = "<|>", x = raw_fr)
+# special_en <- grep(pattern = "<|>", x = raw_en)
+# special_fr <- grep(pattern = "<|>", x = raw_fr)
+# 
+# raw_en[special_en]
+# raw_fr[special_en]
+# 
+# raw_en[special_fr]
+# raw_fr[special_fr]
 
-raw_en[special_en]
-raw_fr[special_en]
+raw_en <- gsub(pattern = "’", replacement = "'", x = raw_en)
+raw_fr <- gsub(pattern = "’", replacement = "'", x = raw_fr)
 
-raw_en[special_fr]
-raw_fr[special_fr]
+chars <- stri_split_boundaries(raw_fr[1:100000], type = "character", simplify = F)
+chars <- unlist(chars)
+sort(unique(chars))
 ```
 
 
@@ -196,14 +203,18 @@ corpus_pre_process <- function(source,
 # length 1644721
 preprocess <- corpus_pre_process(source = raw_en, 
                                  target = raw_fr, 
-                                 min_seq_len = 10, 
-                                 max_seq_len = 50, 
+                                 min_seq_len = 8, 
+                                 max_seq_len = 48, 
                                  min_seq_ratio = 0.5, 
                                  max_seq_ratio = 2,
-                                 word_count_min = 25, 
+                                 word_count_min = 50, 
                                  dic = NULL)
 
-write_rds(preprocess, path = "data/preprocess_euro_en_fr_10_50.rds")
+chars <- stri_split_boundaries(preprocess$dic$target_dic$word, type = "character")
+chars <- unlist(chars)
+sort(unique(chars))
+
+write_rds(preprocess, path = "data/preprocess_euro_en_fr_8_48.rds")
 rm(preprocess)
 rm(raw_en)
 rm(raw_fr)
@@ -214,9 +225,7 @@ gc()
 ### Make bucket data
 
 ```{r, eval = FALSE}
-preprocess <- read_rds(path = "data/preprocess_euro_en_fr_10_50.rds")
-
-create_buckets <- function(source, target, seq_len = c(225), 
+create_buckets <- function(source, target, 
                            source_align = "left", target_align = "left",
                            source_dic, target_dic) {
   
@@ -228,7 +237,7 @@ create_buckets <- function(source, target, seq_len = c(225),
   target <- dcast(data = target, seq_word_id ~ seq_id, value.var = "word_id", fill = 0)
   target <- as.matrix(target[ , c("seq_word_id") := NULL])
   
-  buckets = list("50" = list(data = source, label = target))
+  buckets = list("48" = list(data = source, label = target))
   
   return(list(buckets = buckets,
               source_dic = source_dic,
@@ -238,10 +247,13 @@ create_buckets <- function(source, target, seq_len = c(225),
 ```
 
 ```{r, eval = FALSE}
+preprocess <- read_rds(path = "data/preprocess_euro_en_fr_8_48.rds")
+
 buckets <- create_buckets(source = preprocess$source_dt, 
                           target = preprocess$target_dt, 
                           source_dic = preprocess$dic$source_dic, 
                           target_dic = preprocess$dic$target_dic)
-write_rds(buckets, "data/buckets_euro_en_fr_10_50.rds")
+
+write_rds(buckets, "data/buckets_euro_en_fr_8_48.rds")
 ```
 

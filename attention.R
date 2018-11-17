@@ -41,13 +41,32 @@ attn_bilinear <- function(query, value, num_hidden) {
 
 
 # dot-attention
-attn_dot <- function(value, query_key_size, scale = T) {
+attn_dot <- function(value, query_key_size, scale = T, prefix) {
   
   init <- function() {
     # [features, seq, batch] -> [query_key_size, seq, batch]
     key <- mx.symbol.FullyConnected(data = value, num_hidden = query_key_size, no_bias = T, flatten = F, name = "attn_key_FC")
+    query_in_weight <- mx.symbol.Variable("query_in_weight")
     query_weight <- mx.symbol.Variable("query_weight")
-    return(list(key = key, value = value, query_weight = query_weight))
+    return(list(key = key, value = value, query_weight = query_weight, query_in_weight = query_in_weight))
+  }
+  
+  attend_in <- function(query, key, value, attn_init) {
+    
+    # [features, batch] -> [query_key_size, batch]
+    query <- mx.symbol.FullyConnected(data = query, num_hidden = query_key_size, weight = attn_init$query_in_weight, no_bias = T, flatten = F)
+    if (scale) query <- query / sqrt(query_key_size)
+    
+    # [query_key_size, batch] -> [1, query_key_size, batch] 
+    query <- mx.symbol.expand_dims(query, axis = 2)
+    
+    # [query_key_size x seq x batch] dot [1 x query_key_size x batch] -> [1 x seq x batch]
+    score <- mx.symbol.batch_dot(lhs = key, rhs = query)
+    
+    # [query_key_size, batch]
+    ctx <- get_ctx(value = value, score = score, length = NULL)
+    
+    return(ctx)
   }
   
   attend <- function(query, key, value, attn_init) {
@@ -67,12 +86,12 @@ attn_dot <- function(value, query_key_size, scale = T) {
     
     return(ctx)
   }
-  return(list(init = init, attend = attend))
+  return(list(init = init, attend = attend, attend_in = attend_in))
 }
 
 
 # MLP-attention
-attn_mlp <- function(value, query_key_size, scale = T) {
+attn_mlp <- function(value, query_key_size, scale = T, prefix) {
   
   init <- function() {
     # [features, seq, batch] -> [query_key_size, seq, batch]

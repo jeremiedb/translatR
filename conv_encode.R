@@ -28,7 +28,6 @@ conv.graph.encode <- function(input_size = NULL,
     seq_mask <- mxnet:::mx.varg.symbol.internal.not_equal_scalar(alist = list(data = data, scalar = 0))
     # [seq, 1, batch]
     seq_mask <- mx.symbol.expand_dims(seq_mask, axis = 1)
-    # seq_mask <- mx.symbol.sum_axis(data = seq_mask, axis = 1)
   }
   
   # [embed, seq, batch]
@@ -39,6 +38,9 @@ conv.graph.encode <- function(input_size = NULL,
   
   # [seq, embed, batch] - For convolutions to apply on the embed channels
   data <- mx.symbol.swapaxes(data = data, dim1 = 1, dim2 = 2)
+  
+  # variational dropout
+  data <- mx.symbol.Dropout(data = data, p = dropout)
   
   # Conv transform
   conv_factory <- function(data, kernel, stride, pad, num_filter, residual = F, num_filter_res = NULL) {
@@ -70,7 +72,7 @@ conv.graph.encode <- function(input_size = NULL,
       mx.symbol.sigmoid
     
     conv <- data
-    for (i in seq_along(depth)) {
+    for (i in seq_len(depth)) {
       conv <- mx.symbol.Convolution(data=conv, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter) %>% 
         mx.symbol.BatchNorm() %>%
         mx.symbol.relu()
@@ -88,18 +90,21 @@ conv.graph.encode <- function(input_size = NULL,
   }
   
   # [seq, features, batch]
-  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 5, stride = 1, pad = 2, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 2, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 2, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
   
-  # [features, seq, batch]
-  # data <- mx.symbol.swapaxes(data = data, dim1 = 1, dim2 = 2)
+  data <- mx.symbol.Convolution(data = data, kernel = 3, stride = 1, pad = 1, num_filter=num_hidden) %>% 
+    mx.symbol.BatchNorm() %>%
+    mx.symbol.relu()
   
   # [seq, features, batch] X [seq, 1, batch] -> [seq, features, batch]
   if (masking) {
     data <- mx.symbol.broadcast_mul(data, seq_mask)
-    # mask <- mx.symbol.SequenceMask(data = concat, use.sequence.length = T, sequence_length = seq_mask, value = 0, name = paste0(prefix, "mask"))
   }
+  
+  # [seq, features, batch] -> [features, seq, batch]
+  data <- mx.symbol.swapaxes(data = data, dim1 = 1, dim2 = 2, name = paste0(prefix, "value"))
   
   # [seq, features, batch]
   return(data)

@@ -77,24 +77,39 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
                    highway.bias = mx.symbol.Variable(paste0(prefix, "l", i, "highway.bias")),
                    read.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.weight")),
                    read.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.bias")))
-    } else if (cell_type=="rich") {
-      cell <- list(input.weight = mx.symbol.Variable(paste0(prefix, "l", i, "input.weight")),
-                   input.bias = mx.symbol.Variable(paste0(prefix, "l", i, "input.bias")),
-                   mem.weight = mx.symbol.Variable(paste0(prefix, "l", i, "mem.weight")),
-                   mem.bias = mx.symbol.Variable(paste0(prefix, "l", i, "mem.bias")),
-                   write.in.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.in.weight")),
-                   write.in.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.in.bias")),
-                   write.c.weight = mx.symbol.Variable(paste0(prefix, "l", i, "write.c.weight")),
-                   write.c.bias = mx.symbol.Variable(paste0(prefix, "l", i, "write.c.bias")),
-                   highway.weight = mx.symbol.Variable(paste0(prefix, "l", i, "highway.weight")),
-                   highway.bias = mx.symbol.Variable(paste0(prefix, "l", i, "highway.bias")),
-                   read.in.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.in.weight")),
-                   read.in.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.in.bias")),
-                   read.c.weight = mx.symbol.Variable(paste0(prefix, "l", i, "read.c.weight")),
-                   read.c.bias = mx.symbol.Variable(paste0(prefix, "l", i, "read.c.bias")))
+    } else if (cell_type=="light") {
+      cell <- list(input_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_input_weight")),
+                   proj_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_proj_weight")),
+                   proj_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_proj_bias")),
+                   gate_c_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_c_weight")),
+                   gate_c_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_c_bias")),
+                   gate_h_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_h_weight")),
+                   gate_h_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_h_bias")),
+                   write_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_write_weight")),
+                   write_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_write_bias")),
+                   proj_c_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_proj_c_weight")),
+                   proj_c_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_proj_c_bias")),
+                   gate_c_c_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_c_c_weight")),
+                   gate_c_c_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_c_c_bias")),
+                   gate_c_h_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_c_h_weight")),
+                   gate_c_h_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_gate_c_h_bias")),
+                   write_c_weight = mx.symbol.Variable(paste0(prefix, "l", i, "_write_c_weight")),
+                   write_c_bias = mx.symbol.Variable(paste0(prefix, "l", i, "_write_c_bias")))
     }
     return (cell)
   })
+  
+  if (cell_type=="lstm") {
+    cell.symbol <- lstm.cell
+  } else if (cell_type=="gru"){
+    cell.symbol <- gru.cell
+  } else if (cell_type=="straight"){
+    cell.symbol <- straight.cell
+  } else if (cell_type=="rich"){
+    cell.symbol <- rich.cell
+  } else if (cell_type=="light"){
+    cell.symbol <- light.cell
+  }
   
   # embeding layer
   data <- mx.symbol.Variable(data_name)
@@ -121,11 +136,12 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
   } else if (bidirectional) {
     if (masking) {
       data_rev <- mx.symbol.SequenceReverse(data = data, use.sequence.length = T, sequence_length = seq.mask, name = paste0(prefix, "reverse"))  
+      # data_rev <- mx.symbol.cast(data_rev, dtype = "float16")
     } else {
       data_rev <- mx.symbol.SequenceReverse(data = data, use.sequence.length = F, name = paste0(prefix, "reverse"))
+      # data_rev <- mx.symbol.cast(data_rev, dtype = "float16")
     }
   } 
-  
   
   data <- mx.symbol.split(data = data, axis = 0, num.outputs = seq_len, squeeze_axis = T)
   if (bidirectional) data_rev <- mx.symbol.split(data = data_rev, axis = 0, num.outputs = seq_len, squeeze_axis = T)
@@ -140,16 +156,6 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
       
       if (seqidx==1) prev.state <- init.state[[i]] else 
         prev.state <- last.states[[i]]
-      
-      if (cell_type=="lstm") {
-        cell.symbol <- lstm.cell
-      } else if (cell_type=="gru"){
-        cell.symbol <- gru.cell
-      } else if (cell_type=="straight"){
-        cell.symbol <- straight.cell
-      } else if (cell_type=="rich"){
-        cell.symbol <- rich.cell
-      }
       
       next.state <- cell.symbol(num_hidden = num_hidden, 
                                 indata = hidden,
@@ -220,6 +226,8 @@ rnn.graph.unroll.encode <- function(num_rnn_layer,
   # concat <- mx.symbol.stack(data = last.hidden, axis = 0, num_args = seq_len, name = paste0(prefix, "concat"))
   concat <- mx.symbol.concat(data = last.hidden, num.args = seq_len, dim = 0, name = paste0(prefix, "concat"))
   concat <- mx.symbol.reshape(data = concat, shape = c(num_hidden, -1, seq_len), name = paste0(prefix, "rnn_reshape"))
+  
+  # concat <- mx.symbol.cast(concat, dtype = "float32")
   
   if (reverse_input) {
     if (masking) {

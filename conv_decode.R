@@ -54,7 +54,7 @@ conv.graph.decode <- function(encode,
       mx.symbol.sigmoid
     
     conv <- data
-    for (i in seq_along(depth)) {
+    for (i in seq_len(depth)) {
       conv <- mx.symbol.Convolution(data=conv, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter) %>% 
         mx.symbol.BatchNorm() %>%
         mx.symbol.relu()
@@ -72,13 +72,10 @@ conv.graph.decode <- function(encode,
   }
   
   # [seq, features, batch]
-  data <- conv_res_factory(data = encode, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = encode, depth = 2, kernel = 5, stride = 1, pad = 2, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 3, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 3, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
   
-  # concat <- mx.symbol.reshape(data = data, shape = c(0,0,0))
-  # concat <- mx.symbol.swapaxes(data = concat, dim1 = 1, dim2 = 2)
-  # concat <- mx.symbol.swapaxes(data = concat, dim1 = 0, dim2 = 1)
   
   # if (masking) {
   #   data <- mx.symbol.broadcast_mul(data, seq_mask)

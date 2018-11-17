@@ -18,6 +18,11 @@ source("conv_encode.R")
 source("conv_decode.R")
 source("model_rnn.R")
 source("metrics.R")
+
+source("RNN_cells.R")
+source("rnn_encode.R")
+source("rnn_decode.R")
+source("attention.R")
 ```
 
 ### Load buckets
@@ -28,39 +33,20 @@ buckets <- read_rds("data/buckets_euro_en_fr_10_50.rds")
 ```
 
 
-```{r}
-### Validation
-# data <- buckets$buckets$`24`$data
-# label <- buckets$buckets$`24`$label
-# 
-# source_dic <- buckets$source_dic
-# target_dic <- buckets$target_dic
-# 
-# setkeyv(target_dic, "word_id")
-# setkeyv(source_dic, "word_id")
-# 
-# source_test <- data[,800001] + 1
-# source_dic[source_test]
-# 
-# target_test <- label[,800001] + 1
-# target_dic[target_test]
-```
-
-
 ### Model architecture
 
 ```{r}
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 128
-num_hidden = 512
-num_embed = 512
+batch_size = 256
+num_hidden = 400
+num_embed = 400
 seq_len = 50
 
-encode <- conv.graph.encode(input_size = source_input_size, num_embed = num_embed, loss_output = NULL, ignore_label = -1, masking = T, num_hidden = num_hidden, dropout = 0.2, prefix = "encode_", data_name = "data", label_name = "dummy1")
+encode <- conv.graph.encode(input_size = source_input_size, num_embed = num_embed, loss_output = NULL, ignore_label = -1, masking = T, num_hidden = num_hidden, dropout = 0.05, prefix = "encode_", data_name = "data", label_name = "dummy1")
 
-decode <- conv.graph.decode(encode = encode, input_size = NULL, num_embed = NULL, config = "one-to-one", loss_output =  "softmax", ignore_label = 0, masking = F, num_hidden = num_hidden, dropout = 0.2, num_decode = target_input_size, prefix = "decode_", label_name = "label")
+decode <- conv.graph.decode(encode = encode, input_size = NULL, num_embed = NULL, loss_output =  "softmax", ignore_label = 0, masking = F, num_hidden = num_hidden, dropout = 0.05, num_decode = target_input_size, prefix = "decode_", label_name = "label")
 
 # graph.viz(encode, shape = c(seq_len, batch_size))
 # graph.viz(decode)
@@ -73,7 +59,6 @@ decode$arguments
 shapes = decode$infer.shape(list(data=c(seq_len, batch_size), label=c(seq_len, batch_size)))
 # shapes = decode$infer.shape(list(data=c(seq_len, batch_size)))
 
-
 shapes_out = shapes$out.shapes
 shapes_arg = shapes$arg.shapes
 ```
@@ -81,10 +66,7 @@ shapes_arg = shapes$arg.shapes
 ### Prepare iterators 
 
 ```{r}
-# potential buggy records between 1248000 and 1272000
-# dim(buckets$buckets$`50`$data[, -(1248000:1272000)])
-# dim(buckets$buckets$`50`$label[, -(1248000:1272000)])
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data[, -(1248000:1272000)], label = buckets$buckets$`50`$label[, -(1248000:1272000)], batch.size = batch_size, shuffle = F)
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data, label = buckets$buckets$`50`$label, batch.size = batch_size, shuffle = T)
 
 iter_train$reset()
 iter_train$iter.next()
@@ -98,15 +80,12 @@ dim(iter_data$label)
 # ctx <- mx.cpu()
 ctx <- mx.gpu(0)
 
-initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitude = 2.5)
+initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitude = 3)
 
-lr_scheduler = mx.lr_scheduler.FactorScheduler(step = 5000, factor_val = 0.5, stop_factor_lr = 1e-5, verbose = T)
-
-# no grad rescale since using "valid" scaling option in SoftmaxOutput
-optimizer <- mxnet:::mx.opt.adam(learning.rate = 1e-3, beta1 = 0.9, beta2 = 0.999,
-                                 epsilon = 1e-8, wd = 0, clip_gradient = 1,
-                                 rescale.grad=1, lr_scheduler = lr_scheduler)
-
+lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 1000, factor_val = 0.9, stop_factor_lr = 5e-5)
+optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
+                           epsilon = 1e-8, wd = 0,
+                           clip_gradient = 1, rescale.grad = 1, lr_scheduler = lr_scheduler)
 
 epoch.end.callback <- mx.callback.log.train.metric(period = 1)
 batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequency = 50)
@@ -115,14 +94,14 @@ system.time(
   model <- mx.model.buckets(symbol = decode,
                             train.data = iter_train, 
                             eval.data = NULL,
-                            num.round = 3, ctx = ctx, verbose = TRUE,
+                            num.round = 10, ctx = ctx, verbose = TRUE,
                             metric = mx.metric.Perplexity, 
                             optimizer = optimizer,  initializer = initializer,
                             batch.end.callback = batch.end.callback, 
                             epoch.end.callback = epoch.end.callback, metric_cpu = F)
 )
 
-mx.model.save(model = model, prefix = "models/model_euro_en_fr_conv_1", iteration = 0)
+mx.model.save(model = model, prefix = "models/model_euro_en_fr_conv_1", iteration = 10)
 ```
 
 
