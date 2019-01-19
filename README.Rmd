@@ -10,14 +10,17 @@ Inspiration taken from the [AWS Sockeye](https://github.com/awslabs/sockeye) pro
 
 ## Getting started
 
-Prepare data using WMT Europarl using `Preproc_euro.Rmd`. Creates a source and target matrix of word indices along with the associated dictionnary. Data preparation mainly relying on `data.table` and `stringi` packages. 
+Prepare data using WMT Europarl using `Preproc_euro.Rmd`. Creates a source and target matrix of word indices along with the associated dictionary. Data preparation mainly relying on `data.table` and `stringi` packages. 
 
 A RNN encoder-decoder training demo is provided in `NLP_rnn.Rmd` and and CNN-RNN architecture is shown in `NLP_cnn_rnn.Rmd`. 
 
-
 ## Performance
 
-Performance during training is tracked using perplexity. Once a training is completed, the above scripts show how to perform a batch inference on a test test, more specifically the a WMT official test set. [sacreBLEU](https://github.com/mjpost/sacreBLEU) is then used to compute the BLEU score, providing a clear comparison point to the metric typically found in publications. 
+Performance during training is tracked using the perplexity metric. Once a training is completed, the above scripts show how to perform a batch inference on a test data, more specifically the WMT official one.  [sacreBLEU](https://github.com/mjpost/sacreBLEU) is then used to compute the BLEU score, providing a clear comparison point to the metric typically found in publications. 
+
+For example: 
+
+`cat data/trans_test_wmt_en_fr_rnn_72_Capital.txt | sacrebleu -t wmt14 -l en-fr`
 
 ## Features: 
 
@@ -32,11 +35,11 @@ Performance during training is tracked using perplexity. Once a training is comp
 
 #### Attention: 
 
-Arhcitectures are fully attentioned based. All information is passed from the encoder to the decoder from the encoded sequences (RNN hidden layers are not carry forward from the encoder to the decoder). 
+Architectures are fully attention based. All information is passed from the encoder to the decoder through the encoded sequences weighted with an attention mechanism (RNN hidden layers are not carry forward from the encoder to the decoder). 
 
 Attention modules are defined in `attention.R`. Three attention approaches are supported, all described in Luong et al, 2015: 
 
- - Bilinear (``attn_bilinear`)
+ - Bilinear (`attn_bilinear`)
  - Dot  (`attn_dot`)
  - MLP (`attn_MLP`)
 
@@ -45,10 +48,10 @@ The decoder network takes an attention module as a parameter along with an encod
 # To do: 
 
  - Test multi-GPU support
- - More efficient data preprocessing to handle larger scale tasks (currently works fine up to around 4M parralel sequences).
+ - More efficient data preprocessing to handle larger scale tasks (currently works fine up to around 4M parallel sequences).
  - Support for bucketing
  - Positional embedding
- - Transformer encoder-decoderr
+ - Transformer encoder-decoder
  - Encoder and decoder self-attention
  - Beam search
 

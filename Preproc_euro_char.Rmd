@@ -23,13 +23,23 @@ library(fst)
 
 Source: (http://www.statmt.org/wmt14/translation-task.html). 
 
+```{r, eval=FALSE}
+download.file(url = "http://www.statmt.org/europarl/v7/fr-en.tgz", destfile = "./data/europarl_fr-en.tgz")
+untar(tarfile = "./data/europarl_fr-en.tgz", exdir = "./data/")
+```
+
+
 ```{r}
-raw_en <- read_lines("data/wmt14-en-fr.src")
-# raw_fr <- read_lines("data/europarl-v7.fr-en.fr")
+raw_en <- read_lines("data/europarl-v7.fr-en.en")
+raw_fr <- read_lines("data/europarl-v7.fr-en.fr")
 ```
 
 ```{r}
 raw_en[1:5]
+raw_fr[1:5]
+
+raw_en[1282000:1282005]
+raw_fr[1282000:1282005]
 ```
 
 
@@ -54,37 +64,35 @@ corpus_pre_process <- function(source,
                                dic = NULL) {
   
   # do not convert to ascii because accented words will be split by the tokenizer
-  # head(raw_vec)
   # raw_vec <-  ::stri_en   stri_enc_toascii(str = raw_vec)
   
   # string pre-process
-  source <- stringi::stri_trans_tolower(source)
-  target <- stringi::stri_trans_tolower(target)
+  # source <- stringi::stri_trans_tolower(source)
+  # target <- stringi::stri_trans_tolower(target)
   
   # split word with tild
   source <- gsub(pattern = "'", replacement = "' ", x = source)
   target <- gsub(pattern = "'", replacement = "' ", x = target)
-  
-  # add  <BOS> and <EOS> token indicators
-  source <- paste("<BOS>", source, "<EOS>")
-  target <- paste("<BOS>", target, "<EOS>")
+  gc()
   
   # split raw sequence vectors into lists of word vectors (one list element per sequence)
-  source_word_vec_list <- stri_split_boundaries(source, type = "word", 
-                                                skip_word_none = T, 
-                                                skip_word_number = F, 
+  source_word_vec_list <- stri_split_boundaries(source, type = "character", 
                                                 simplify = F)
   
-  target_word_vec_list <- stri_split_boundaries(target, type = "word", 
-                                                skip_word_none = T, 
-                                                skip_word_number = F, 
+  target_word_vec_list <- stri_split_boundaries(target, type = "character", 
                                                 simplify = F)
+  
+  gc()
+  
+  # add BOS-EOS tokens
+  source_word_vec_list <- lapply(source_word_vec_list, function(x) c("<BOS>", x, "<EOS>"))
+  target_word_vec_list <- lapply(target_word_vec_list, function(x) c("<BOS>", x, "<EOS>"))
   
   # number of entries per sequence
   source_seq_length <- sapply(source_word_vec_list, length)
   target_seq_length <- sapply(target_word_vec_list, length)
   
-  plot <- plot_ly(x = source_seq_length, type="histogram", name="source") %>% 
+  plot <- plot_ly(x = source_seq_length, type="histogram", name="source") %>%
     add_trace(x = target_seq_length, name = "target")
   
   # keep sequences meeting seq length and source/target ratio criterias
@@ -162,22 +170,29 @@ corpus_pre_process <- function(source,
 ```
 
 ```{r, eval = FALSE}
-
-# load predefined Dict
-dic <- read_rds("models/model_euro_en_fr_cnn_rnn_v2_dic.rds")
+# preprocess_full <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 4, max_seq_len = 48, word_count_min = 20, dic = NULL)
+# write_rds(preprocess_full, path = "data/preprocess_euro_en_fr_4_48.rds")
+# 
+# preprocess <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 25, max_seq_len = 48, word_count_min = 20, dic = preprocess_full$dic)
+# write_rds(preprocess, path = "data/preprocess_euro_en_fr_25_48.rds")
+# rm(raw_en, raw_fr, preprocess_full, preprocess)
+# gc()
 
 # length 1644721
-preprocess <- corpus_pre_process(source = raw_en, 
-                                 target = raw_en, 
-                                 min_seq_len = 1, 
-                                 max_seq_len = 72, 
-                                 min_seq_ratio = 0, 
-                                 max_seq_ratio = Inf,
-                                 word_count_min = 1, 
-                                 dic = dic)
+preprocess <- corpus_pre_process(source = raw_en[1:1000000], 
+                                 target = raw_fr[1:1000000], 
+                                 min_seq_len = 20, 
+                                 max_seq_len = 200, 
+                                 min_seq_ratio = 2/3, 
+                                 max_seq_ratio = 3/2,
+                                 word_count_min = 25, 
+                                 dic = NULL)
 
-# write_rds(preprocess, path = "data/wmt14_test_en_fr.rds")
-# gc()
+# write_rds(preprocess, path = "data/preprocess_euro_en_fr_8_48.rds")
+# rm(preprocess)
+rm(raw_en)
+rm(raw_fr)
+gc()
 
 ```
 
@@ -197,7 +212,7 @@ create_buckets <- function(source, target,
   target <- dcast(data = target, seq_word_id ~ seq_id, value.var = "word_id", fill = 0)
   target <- as.matrix(target[ , c("seq_word_id") := NULL])
   
-  buckets = list("72" = list(data = source, label = target))
+  buckets = list(data = source, label = target)
   
   return(list(buckets = buckets,
               source_dic = source_dic,
@@ -207,28 +222,14 @@ create_buckets <- function(source, target,
 ```
 
 ```{r, eval = FALSE}
-# preprocess <- read_rds(path = "data/wmt14_test_en_fr.rds")
+# preprocess <- read_rds(path = "data/preprocess_euro_en_fr_8_48.rds")
 
 buckets <- create_buckets(source = preprocess$source_dt, 
                           target = preprocess$target_dt, 
                           source_dic = preprocess$dic$source_dic, 
                           target_dic = preprocess$dic$target_dic)
 
-head(preprocess$source_dt,20)
-
-source_dic = preprocess$dic$source_dic
-head(preprocess$dic$source_dic[20000:20020])
-
-data <- matrix(0, nrow = 72, ncol = ncol(buckets$buckets$`72`$data))
-data[1:71, ] <- buckets$buckets$`72`$data
-
-label <- matrix(0, nrow = 72, ncol = ncol(buckets$buckets$`72`$label))
-label[1:71, ] <- buckets$buckets$`72`$label
-
-buckets$buckets$`72`$data <- data
-buckets$buckets$`72`$label <- label
-
-write_rds(buckets, "data/buckets_wmt14_test_en_fr_72.rds")
+write_rds(buckets, "data/buckets_euro_en_fr_char_20_200.rds")
 
 ```
 

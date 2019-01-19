@@ -16,6 +16,7 @@ library(stringr)
 library(stringi)
 library(plotly)
 library(fst)
+library(quanteda)
 ```
 
 
@@ -63,12 +64,6 @@ raw_fr[1282000:1282005]
 # raw_en[special_fr]
 # raw_fr[special_fr]
 
-raw_en <- gsub(pattern = "’", replacement = "'", x = raw_en)
-raw_fr <- gsub(pattern = "’", replacement = "'", x = raw_fr)
-
-chars <- stri_split_boundaries(raw_fr[1:100000], type = "character", simplify = F)
-chars <- unlist(chars)
-sort(unique(chars))
 ```
 
 

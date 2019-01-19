@@ -91,8 +91,10 @@ conv.graph.encode <- function(input_size = NULL,
   
   # [seq, features, batch]
   data <- conv_res_factory(data = data, depth = 1, kernel = 5, stride = 1, pad = 2, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 2, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 2, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 5, stride = 1, pad = 2, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
   
   data <- mx.symbol.Convolution(data = data, kernel = 3, stride = 1, pad = 1, num_filter=num_hidden) %>% 
     mx.symbol.BatchNorm() %>%
