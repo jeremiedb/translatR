@@ -18,12 +18,12 @@ library(mxnet)
 library(stringi)
 library(aws.s3)
 
-source("RNN_cells.R")
-source("rnn_encode.R")
-source("rnn_decode.R")
-source("model_rnn.R")
-source("attention.R")
-source("metrics.R")
+source("R/RNN_cells.R")
+source("R/encoder-rnn.R")
+source("R/decoder-rnn.R")
+source("R/model_rnn.R")
+source("R/attention.R")
+source("R/metrics.R")
 ```
 
 ```{r}
@@ -33,7 +33,7 @@ source("metrics.R")
 ### Load buckets
 
 ```{r}
-buckets <- read_rds("data/buckets_euro_en_fr_8_48.rds")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
 # buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_10_50.rds", bucket = "nimus-data")
 ```
 
@@ -44,12 +44,12 @@ buckets <- read_rds("data/buckets_euro_en_fr_8_48.rds")
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 384
+batch_size = 128
 num_embed = 512
 num_hidden = 512
-query_key_size = 256
-seq_len = 48
-num_rnn_layer = 3
+query_key_size = 512
+seq_len = 64
+num_rnn_layer = 5
 num_proj_key = NULL
 ```
 
@@ -76,7 +76,7 @@ query = mx.symbol.Variable("query")
 query = mx.symbol.identity(query, name = "query")
 value = mx.symbol.Variable("value")
 
-attn <- attn_dot(value = value, query_key_size = num_hidden, scale = T)
+attn <- attn_mlp(value = value, query_key_size = num_hidden, scale = T)
 init <- attn$init()
 attend <- attn$attend
 
@@ -124,7 +124,7 @@ table(arguments(decode_argmax) == arguments(decode_teacher))
 
 ```{r}
 mx.set.seed(44)
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`48`$data, label = buckets$buckets$`48`$label, batch.size = batch_size, shuffle = T)
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data, label = buckets$buckets$`64`$label, batch.size = batch_size, shuffle = T)
 
 iter_train$reset()
 iter_train$iter.next()
@@ -162,9 +162,9 @@ initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitu
 # optimizer <- mx.opt.create("adadelta", rho = 0.95, epsilon = 1e-8, wd = 1e-8,
 #                            clip_gradient = 1, rescale.grad=1)
 
-lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 2500, factor_val = 0.9, stop_factor_lr = 5e-5)
+lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 5000, factor_val = 0.9, stop_factor_lr = 5e-5)
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
-                           epsilon = 1e-8, wd = 0,
+                           epsilon = 1e-8, wd = 1e-8,
                            clip_gradient = 1, rescale.grad = 1, lr_scheduler = lr_scheduler)
 
 logger <- mx.metric.logger()
@@ -174,7 +174,7 @@ batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequ
 model <- mx.model.buckets(symbol = decode_teacher,
                           train.data = iter_train, 
                           eval.data = NULL,
-                          num.round = 8, 
+                          num.round = 5, 
                           ctx = ctx, 
                           verbose = TRUE,
                           metric = mx.metric.Perplexity, 
@@ -183,16 +183,16 @@ model <- mx.model.buckets(symbol = decode_teacher,
                           batch.end.callback = batch.end.callback, 
                           epoch.end.callback = epoch.end.callback)
 
-mx.model.save(model = model, prefix = "models/model_euro_en_fr_rnn_lstm_teacher_v1", iteration = 8)
-mx.symbol.save(symbol = decode_argmax, filename = "models/model_euro_en_fr_rnn_lstm_argmax_v1.json")
+mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_rnn_lstm_teacher_v2", iteration = 5)
+mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_rnn_lstm_argmax_v2.json")
 ```
 
 
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_euro_en_fr_rnn_lstm_teacher_v1", iteration = 8)
-sym_infer <- mx.symbol.load(file.name = "models/model_euro_en_fr_rnn_lstm_argmax_v1.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_rnn_lstm_teacher_v2", iteration = 5)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_rnn_lstm_argmax_v2.json")
 
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
@@ -207,15 +207,12 @@ model_infer <- structure(model_infer, class="MXFeedForwardModel")
 infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   
   infer_seq <- paste("<BOS>", infer_seq, "<EOS>")
-  infer_seq <- stri_split_boundaries(infer_seq, type = "word", 
-                                     skip_word_none = T, 
-                                     skip_word_number = F, 
-                                     simplify = T)
+  infer_seq <- unlist(stri_split(str = infer_seq, regex = "\\s+"))
   
-  infer_seq <- data.table(t(infer_seq))
+  infer_seq <- data.table(infer_seq)
   infer_dt <- source_dic[infer_seq]
   
-  zeros <- matrix(0, nrow = 48, ncol = 1)
+  zeros <- matrix(0, nrow = 64, ncol = 1)
   data <- zeros
   data[1:length(infer_dt$word_id), 1] <- infer_dt$word_id
   
@@ -234,11 +231,7 @@ infer_helper <- function(infer_seq, model, source_dic, target_dic) {
 infer_helper(infer_seq = "tomorrow i want to talk about the laws at the parliament",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
-
-infer_helper(infer_seq = "i am glad to meet the first minister",
-             model = model, source_dic = source_dic, target_dic = target_dic)
-
-infer_helper(infer_seq = "i am glad to meet the first minister",
+infer_helper(infer_seq = "I am glad to meet the first minister .",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
 infer_helper(infer_seq = "have you seen the speaker",
@@ -246,6 +239,65 @@ infer_helper(infer_seq = "have you seen the speaker",
 
 infer_helper(infer_seq = "it is what it is",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
+
+```
+
+
+
+
+## BLEU score
+
+```{r}
+ctx <- mx.gpu()
+bucket_test <- read_rds("data/buckets_wmt14_test_en_fr_72.rds")
+batch_size <- 16
+seq_len <- 72
+test_size <- ncol(bucket_test$buckets[[as.character(seq_len)]]$data)
+
+model <- mx.model.load(prefix = "models/model_euro_en_fr_cnn_rnn_teacher_v2", iteration = 8)
+sym_infer <- mx.symbol.load(file.name = "models/model_euro_en_fr_cnn_rnn_argmax_v2.json")
+
+sym_infer$arguments
+
+source_dic <- bucket_test$source_dic
+target_dic <- bucket_test$target_dic
+target_dic[, word_id_char := as.character(word_id)]
+setkeyv(source_dic, "word")
+setkeyv(target_dic, "word_id_char")
+
+model_infer <- list(symbol = sym_infer, arg.params = model$arg.params, aux.params = model$aux.params)
+model_infer <- structure(model_infer, class="MXFeedForwardModel")
+
+i <- 1
+trans_tot <- NULL
+
+for (i in seq_len(ceiling(test_size / batch_size))) {
+  
+  gc()
+  idx <- ((i-1) * batch_size + 1):min(test_size, (i*batch_size)) 
+  
+  iter_test <- mx.io.arrayiter(data = bucket_test$buckets[[as.character(seq_len)]]$data[, idx], label = bucket_test$buckets[[as.character(seq_len)]]$label[, idx], batch.size = length(idx), shuffle = F)
+  
+  infer_pred <- mx.infer.rnn(infer.data = iter_test, model = model_infer, ctx = ctx)
+  infer_nd <- mx.nd.array(infer_pred)
+  infer_max <- as.array(mx.nd.argmax(infer_nd, axis = 1))
+  translation <- target_dic[as.character(infer_max)]
+  translation[, id := rep(1:seq_len, times = length(idx))]
+  translation[, seq_id := rep(idx, each = seq_len)]
+  
+  translation[, EOS_id := which.max(word == "EOS"), by = seq_id]
+  translation[, EOS_id := ifelse(word %in% "EOS", EOS_id, 999L), by = seq_id]
+  translation[, .KEEP := id > 1 & id < EOS_id & word != "<UNKNOWN>"]
+  
+  trans_agg <- translation[, .(agg = paste0(word, collapse = " ")), by = c("seq_id", ".KEEP")]
+  trans_tot <- rbind(trans_tot, trans_agg)
+  
+}
+
+trans_tot <- trans_tot[order(seq_id, .KEEP)]
+trans_tot <- trans_tot[, .(agg = last(agg)), by = seq_id]
+
+write_lines(trans_tot$agg, path = "data/trans_test_wmt_en_fr.txt")
 
 ```
 

@@ -18,17 +18,12 @@ library(mxnet)
 library(stringi)
 library(aws.s3)
 
-source("RNN_cells.R")
-
-source("conv_encode.R")
-source("conv_decode.R")
-
-source("rnn_encode.R")
-source("rnn_decode.R")
-
-source("model_rnn.R")
-source("attention.R")
-source("metrics.R")
+source("R/RNN_cells.R")
+source("R/encoder-cnn.R")
+source("R/decoder-rnn.R")
+source("R/model_rnn.R")
+source("R/attention.R")
+source("R/metrics.R")
 ```
 
 ```{r}
@@ -38,7 +33,7 @@ source("metrics.R")
 ### Load buckets
 
 ```{r}
-buckets <- read_rds("data/buckets_euro_en_fr_10_50.rds")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
 # buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_10_50.rds", bucket = "nimus-data")
 ```
 
@@ -49,11 +44,11 @@ buckets <- read_rds("data/buckets_euro_en_fr_10_50.rds")
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 80
+batch_size = 256
 num_embed = 512
 num_hidden = 512
 query_key_size = 256
-seq_len = 50
+seq_len = 64
 num_rnn_layer = 3
 num_proj_key = NULL
 ```
@@ -81,7 +76,7 @@ query = mx.symbol.Variable("query")
 query = mx.symbol.identity(query, name = "query")
 value = mx.symbol.Variable("value")
 
-attn <- attn_dot(value = value, query_key_size = num_hidden, scale = T)
+attn <- attn_mlp(value = value, query_key_size = num_hidden, scale = T)
 init <- attn$init()
 attend <- attn$attend
 
@@ -130,7 +125,7 @@ table(arguments(decode_argmax) == arguments(decode_teacher))
 
 ```{r}
 mx.set.seed(44)
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data, label = buckets$buckets$`50`$label, batch.size = batch_size, shuffle = T)
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data, label = buckets$buckets$`64`$label, batch.size = batch_size, shuffle = T)
 
 iter_train$reset()
 iter_train$iter.next()
@@ -170,7 +165,7 @@ initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitu
 
 lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 5000, factor_val = 0.9, stop_factor_lr = 5e-5)
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
-                           epsilon = 1e-8, wd = 0,
+                           epsilon = 1e-8, wd = 1e-8,
                            clip_gradient = 1, rescale.grad = 1, lr_scheduler = lr_scheduler)
 
 logger <- mx.metric.logger()
@@ -180,22 +175,22 @@ batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequ
 model <- mx.model.buckets(symbol = decode_teacher,
                           train.data = iter_train, 
                           eval.data = NULL,
-                          num.round = 5, ctx = ctx, verbose = TRUE,
+                          num.round = 8, ctx = ctx, verbose = TRUE,
                           metric = mx.metric.Perplexity, 
                           optimizer = optimizer,  initializer = initializer,
                           batch.end.callback = batch.end.callback, 
                           epoch.end.callback = epoch.end.callback)
 
-mx.model.save(model = model, prefix = "models/model_euro_en_fr_cnn_rnn_teacher_v1", iteration = 5)
-mx.symbol.save(symbol = decode_argmax, filename = "models/model_euro_en_fr_cnn_rnn_argmax_v1.json")
+mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v1", iteration = 8)
+mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_cnn_rnn_argmax_v1.json")
 ```
 
 
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_euro_en_fr_cnn_rnn_teacher_v1", iteration = 5)
-sym_infer <- mx.symbol.load(file.name = "models/model_euro_en_fr_cnn_rnn_argmax_v1.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v1", iteration = 8)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v1.json")
 
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
@@ -209,16 +204,14 @@ model_infer <- structure(model_infer, class="MXFeedForwardModel")
 
 infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   
+  infer_seq <- gsub(pattern = "([[:punct:]])", replacement = " \\1 ", x = infer_seq)
   infer_seq <- paste("<BOS>", infer_seq, "<EOS>")
-  infer_seq <- stri_split_boundaries(infer_seq, type = "word", 
-                                     skip_word_none = T, 
-                                     skip_word_number = F, 
-                                     simplify = T)
+  infer_seq <- unlist(stri_split(str = infer_seq, regex = "\\s+"))
   
-  infer_seq <- data.table(t(infer_seq))
+  infer_seq <- data.table(infer_seq)
   infer_dt <- source_dic[infer_seq]
   
-  zeros <- matrix(0, nrow = 50, ncol = 1)
+  zeros <- matrix(0, nrow = 64, ncol = 1)
   data <- zeros
   data[1:length(infer_dt$word_id), 1] <- infer_dt$word_id
   
@@ -234,7 +227,7 @@ infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   return(list(data = data, translation = translation))
 }
 
-infer_helper(infer_seq = "tomorrow i want to talk about the laws in the parliament",
+infer_helper(infer_seq = "Tomorrow I want to talk about the laws in the parliament.",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
 infer_helper(infer_seq = "i am minister",
@@ -243,7 +236,7 @@ infer_helper(infer_seq = "i am minister",
 infer_helper(infer_seq = "the union and the government",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
-infer_helper(infer_seq = "it is what it is",
+infer_helper(infer_seq = "That's what it is.",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
 ```
@@ -252,13 +245,13 @@ infer_helper(infer_seq = "it is what it is",
 
 ```{r}
 ctx <- mx.gpu()
-bucket_test <- read_rds("data/buckets_wmt14_test_en_fr_72.rds")
-batch_size <- 16
-seq_len <- 72
+bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64.rds")
+batch_size <- 32
+seq_len <- 64
 test_size <- ncol(bucket_test$buckets[[as.character(seq_len)]]$data)
 
-model <- mx.model.load(prefix = "models/model_euro_en_fr_cnn_rnn_teacher_v2", iteration = 8)
-sym_infer <- mx.symbol.load(file.name = "models/model_euro_en_fr_cnn_rnn_argmax_v2.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v1", iteration = 8)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v1.json")
 
 sym_infer$arguments
 
@@ -288,8 +281,8 @@ for (i in seq_len(ceiling(test_size / batch_size))) {
   translation[, id := rep(1:seq_len, times = length(idx))]
   translation[, seq_id := rep(idx, each = seq_len)]
   
-  translation[, EOS_id := which.max(word == "EOS"), by = seq_id]
-  translation[, EOS_id := ifelse(word %in% "EOS", EOS_id, 999L), by = seq_id]
+  translation[, EOS_id := which.max(word == "<EOS>"), by = seq_id]
+  translation[, EOS_id := ifelse(EOS_id > 1, EOS_id, 999L), by = seq_id]
   translation[, .KEEP := id > 1 & id < EOS_id & word != "<UNKNOWN>"]
   
   trans_agg <- translation[, .(agg = paste0(word, collapse = " ")), by = c("seq_id", ".KEEP")]
@@ -300,7 +293,19 @@ for (i in seq_len(ceiling(test_size / batch_size))) {
 trans_tot <- trans_tot[order(seq_id, .KEEP)]
 trans_tot <- trans_tot[, .(agg = last(agg)), by = seq_id]
 
-write_lines(trans_tot$agg, path = "data/trans_test_wmt_en_fr.txt")
+# Punctuation post process
+translation <- trans_tot$agg
+translation <- gsub(pattern = '\\s+', replacement = ' ', x = translation)
+translation <- gsub(pattern = "\\s(\\.)", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(,)", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(;)", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(\\?)", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(\\!)", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(')\\s", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
+translation <- gsub(pattern = " \\( ", replacement = " \\(", x = translation)
+translation <- gsub(pattern = " \\) ", replacement = "\\) ", x = translation)
 
+write_lines(translation, path = "data/translation/wmt14_en_fr_rnn_cnn_v2.txt")
 ```
 
