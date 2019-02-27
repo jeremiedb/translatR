@@ -1,5 +1,5 @@
 ---
-title: "Translation with RNN"
+title: "Fully convolutional translation - In Dev"
 output:
   html_document:
     theme: paper
@@ -19,8 +19,8 @@ library(stringi)
 library(aws.s3)
 
 source("R/RNN_cells.R")
-source("R/encoder-rnn.R")
-source("R/decoder-rnn.R")
+source("R/encoder-cnn.R")
+source("R/decoder-cnn.R")
 source("R/model_rnn.R")
 source("R/attention.R")
 source("R/metrics.R")
@@ -33,7 +33,8 @@ source("R/metrics.R")
 ### Load buckets
 
 ```{r}
-buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v2.rds")
+# buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_10_50.rds", bucket = "nimus-data")
 ```
 
 
@@ -43,17 +44,17 @@ buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 128
+batch_size = 256
 num_embed = 512
 num_hidden = 512
 query_key_size = 512
 seq_len = 64
-num_rnn_layer = 5
+num_rnn_layer = 4
 num_proj_key = NULL
 ```
 
 ```{r}
-encode <- rnn.graph.unroll.encode(seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = source_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = NULL, ignore_label = 0, masking = T, num_hidden = num_hidden, dropout = 0.1, prefix = "encode_", init.state = NULL, data_name = "data", bidirectional = T, reverse_input = F)
+encode <- conv.graph.encode(input_size = source_input_size, num_embed = num_embed, loss_output = NULL, ignore_label = -1, masking = T, num_hidden = num_hidden, dropout = 0.1, prefix = "encode_", data_name = "data", label_name = "dummy1")
 ```
 
 
@@ -75,7 +76,9 @@ query = mx.symbol.Variable("query")
 query = mx.symbol.identity(query, name = "query")
 value = mx.symbol.Variable("value")
 
-attn <- attn_mlp(value = value, query_key_size = num_hidden, scale = T)
+# attn <- attn_mlp(value = value, query_key_size = num_hidden, scale = T)
+attn <- attn_dot(value = value, query_key_size = num_hidden, scale = T)
+
 init <- attn$init()
 attend <- attn$attend
 
@@ -93,41 +96,47 @@ graph.viz(attention, shape = list(query = c(num_hidden, batch_size),
 Attention functions return two functions:
 
 - an init() function to be called following the definition of the encoder so as to initialize the query, key and value components. 
- - attend() function to be called each time an attention query is performed during decoding. 
+- attend() function to be called each time an attention query is performed during decoding. 
 
 ```{r}
 # attn <- attn_dot(value = encode, query_key_size = num_hidden, scale = T)
-attn <- attn_dot(value = encode, query_key_size = query_key_size, scale = T)
+attn <- attn_dot(value = encode, query_key_size = query_key_size, scale = T, prefix = "attn")
 
-# no masking - handled implicitly thourgh the ignore label of softmax
-decode_teacher <- rnn.graph.unroll.decode(mode = "teacher", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label")
+decode <- conv.graph.decode(encode = encode, num_decode = target_input_size , num_embed = num_embed, loss_output = "softmax", ignore_label = 0, masking = F, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label", batch_size = batch_size)
 
-decode_argmax <- rnn.graph.unroll.decode(mode = "argmax", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label")
+# # no masking - handled implicitly thourgh the ignore label of softmax
+# decode_teacher <- deco(mode = "teacher", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label")
+# 
+# decode_argmax <- rnn.graph.unroll.decode(mode = "argmax", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label")
 
 # decode_sample <- rnn.graph.unroll.decode(mode = "sample", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.05, prefix = "decode_", label_name = "label")
 
+# graph.viz(encode)
 encode$arguments
 shapes = encode$infer.shape(list(data=c(seq_len, batch_size)))
 
-decode_argmax$arguments
-shapes <- decode_argmax$infer.shape(list(data=c(seq_len, batch_size), label=c(seq_len, batch_size)))
+decode$arguments
+shapes <- decode$infer.shape(list(data=c(seq_len, batch_size), label=c(seq_len, batch_size)))
 
 shapes_out = shapes$out.shapes
 shapes_arg = shapes$arg.shapes
 
 # validate that argmax decoder has same arguments than one used for training
-table(arguments(decode_argmax) == arguments(decode_teacher))
+# table(arguments(decode_argmax) == arguments(decode_teacher))
 ```
 
 ### Prepare iterators 
 
 ```{r}
-mx.set.seed(44)
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data, label = buckets$buckets$`64`$label, batch.size = batch_size, shuffle = T)
 
-iter_train$reset()
-iter_train$iter.next()
-iter_data = iter_train$value()
+idx_tot <- sample(ncol(buckets$buckets$`64`$data), replace = F)
+idx_train <- idx_tot[1:as.integer(0.99 * length(idx_tot))]
+idx_eval <- setdiff(idx_tot, idx_train)
+
+mx.set.seed(44)
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_train], label = buckets$buckets$`64`$label[, idx_train], batch.size = batch_size, shuffle = T)
+iter_eval <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_eval], label = buckets$buckets$`64`$label[, idx_eval], batch.size = batch_size, shuffle = T)
+
 ```
 
 ```{r}
@@ -153,7 +162,7 @@ iter_data = iter_train$value()
 # ctx <- mx.cpu()
 ctx <- mx.gpu(0)
 
-initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitude = 2.5)
+initializer <- mx.init.Xavier(rnd_type = "uniform", factor_type = "in", magnitude = 2.5)
 
 # optimizer <- mx.opt.create("rmsprop", learning.rate = 1e-3, gamma1 = 0.95, gamma2 = 0.95,
 #                            wd = 1e-5, clip_gradient = 1, rescale.grad=1)
@@ -161,37 +170,36 @@ initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitu
 # optimizer <- mx.opt.create("adadelta", rho = 0.95, epsilon = 1e-8, wd = 1e-8,
 #                            clip_gradient = 1, rescale.grad=1)
 
-lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 5000, factor_val = 0.9, stop_factor_lr = 5e-5)
+lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 5000, 
+                                                factor_val = 0.9, 
+                                                stop_factor_lr = 5e-5)
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
                            epsilon = 1e-8, wd = 1e-8,
                            clip_gradient = 1, rescale.grad = 1, lr_scheduler = lr_scheduler)
 
 logger <- mx.metric.logger()
 epoch.end.callback <- mx.callback.log.train.metric(period = 1)
-batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequency = 25)
+batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequency = 100)
 
-model <- mx.model.buckets(symbol = decode_teacher,
-                          train.data = iter_train, 
-                          eval.data = NULL,
-                          num.round = 5, 
-                          ctx = ctx, 
-                          verbose = TRUE,
-                          metric = mx.metric.Perplexity, 
-                          optimizer = optimizer,  
-                          initializer = initializer,
-                          batch.end.callback = batch.end.callback, 
+model <- mx.model.buckets(symbol = decode,
+                          train.data = iter_train,
+                          eval.data = iter_eval,
+                          num.round = 2, ctx = ctx, verbose = TRUE,
+                          metric = mx.metric.Perplexity,
+                          optimizer = optimizer,  initializer = initializer,
+                          batch.end.callback = batch.end.callback,
                           epoch.end.callback = epoch.end.callback)
 
-mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_rnn_lstm_teacher_v2", iteration = 5)
-mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_rnn_lstm_argmax_v2.json")
+mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_cnn_cnn_teacher_v2", iteration = 2)
+mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_cnn_cnn_argmax_v2.json")
 ```
 
 
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_wmt15_en_fr_rnn_lstm_teacher_v2", iteration = 5)
-sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_rnn_lstm_argmax_v2.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
 
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
@@ -228,34 +236,34 @@ infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   return(list(data = data, translation = translation))
 }
 
-infer_helper(infer_seq = "tomorrow i want to talk about the laws at the parliament",
+infer_helper(infer_seq = "Tomorrow I want to talk about the laws in the parliament.",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
-infer_helper(infer_seq = "I am glad to meet the first minister .",
+infer_helper(infer_seq = "i am minister",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
-infer_helper(infer_seq = "have you seen the speaker",
+infer_helper(infer_seq = "the union and the government",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
-infer_helper(infer_seq = "it is what it is",
+infer_helper(infer_seq = "That's what it is.",
+             model = model_infer, source_dic = source_dic, target_dic = target_dic)
+
+infer_helper(infer_seq = "I'd love to learn French!",
              model = model_infer, source_dic = source_dic, target_dic = target_dic)
 
 ```
-
-
-
 
 ## BLEU score
 
 ```{r}
 ctx <- mx.gpu()
-bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64.rds")
-batch_size <- 16
+bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64_v2.rds")
+batch_size <- 128
 seq_len <- 64
 test_size <- ncol(bucket_test$buckets[[as.character(seq_len)]]$data)
 
-model <- mx.model.load(prefix = "models/model_wmt15_en_fr_rnn_lstm_teacher_v2", iteration = 5)
-sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_rnn_lstm_argmax_v2.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
 
 sym_infer$arguments
 
@@ -306,11 +314,11 @@ translation <- gsub(pattern = "\\s(;)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(\\?)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(\\!)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(')\\s", replacement = "\\1", x = translation)
-translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
+# translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
 translation <- gsub(pattern = " \\( ", replacement = " \\(", x = translation)
 translation <- gsub(pattern = " \\) ", replacement = "\\) ", x = translation)
+translation <- gsub(pattern = "<UNKNOWN>", replacement = " ", x = translation)
 
-write_lines(translation, path = "data/translation//wmt14_en_fr_rnn_v2.txt")
-
+write_lines(translation, path = "data/translation/wmt14_en_fr_cnn_rnn_v2.txt")
 ```
 

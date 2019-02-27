@@ -1,5 +1,4 @@
 conv.graph.decode <- function(encode, 
-                              input_size = NULL,
                               num_embed = NULL, 
                               num_hidden,
                               num_decode,
@@ -7,8 +6,8 @@ conv.graph.decode <- function(encode,
                               ignore_label = -1,
                               loss_output = NULL, 
                               masking = F, 
-                              config,
                               prefix = "",
+                              batch_size,
                               label_name = "label") {
   
   cls.weight <- mx.symbol.Variable(paste0(prefix, "cls.weight"))
@@ -24,20 +23,20 @@ conv.graph.decode <- function(encode,
   #   # seq_mask <- mx.symbol.sum_axis(data = seq_mask, axis = 1)
   # }
   
-  # Conv transform
-  conv_factory <- function(data, kernel, stride, pad, num_filter, residual = F, num_filter_res = NULL) {
-    conv <- mx.symbol.Convolution(data=data, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter)
-    gate <- mx.symbol.Convolution(data=data, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter)
-    out <- conv * mx.symbol.sigmoid(gate)
-    
-    if (residual) {
-      out = out + data
-      if (!is.null(num_filter_res)) {
-        out <- mx.symbol.Convolution(data=out, kernel=c(1,1), stride=c(1,1), pad=c(0,0), num_filter=num_filter_out)
-      }
-    }
-    return(out)
-  }
+  # # Conv transform
+  # conv_factory <- function(data, kernel, stride, pad, num_filter, residual = F, num_filter_res = NULL) {
+  #   conv <- mx.symbol.Convolution(data=data, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter)
+  #   gate <- mx.symbol.Convolution(data=data, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter)
+  #   out <- conv * mx.symbol.sigmoid(gate)
+  #   
+  #   if (residual) {
+  #     out = out + data
+  #     if (!is.null(num_filter_res)) {
+  #       out <- mx.symbol.Convolution(data=out, kernel=c(1,1), stride=c(1,1), pad=c(0,0), num_filter=num_filter_out)
+  #     }
+  #   }
+  #   return(out)
+  # }
   
   # Conv residual transform
   conv_res_factory <- function(data, 
@@ -50,10 +49,13 @@ conv.graph.decode <- function(encode,
                                num_filter_proj = NULL) {
     
     # Gate
-    gate <- mx.symbol.Convolution(data = data, kernel = kernel, stride = stride, pad=pad, num_filter = num_filter) %>% 
+    buffer <- mxnet:::mx.varg.symbol.internal.full(alist = list(shape = c(kernel-1, num_hidden, batch_size), value = 0))
+    buffer <- mx.symbol.concat(c(buffer, data), num.args = 2, dim = -1)
+    
+    gate <- mx.symbol.Convolution(data = buffer, kernel = kernel, stride = stride, pad=pad, num_filter = num_filter) %>% 
       mx.symbol.sigmoid
     
-    conv <- data
+    conv <- buffer
     for (i in seq_len(depth)) {
       conv <- mx.symbol.Convolution(data=conv, kernel=kernel, stride=stride, pad=pad, num_filter=num_filter) %>% 
         mx.symbol.BatchNorm() %>%
@@ -71,11 +73,21 @@ conv.graph.decode <- function(encode,
     return(data)
   }
   
-  # [seq, features, batch]
-  data <- conv_res_factory(data = encode, depth = 2, kernel = 5, stride = 1, pad = 2, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 3, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
-  data <- conv_res_factory(data = data, depth = 3, kernel = 3, stride = 1, pad = 1, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  # [features, seq, batch] -> [seq, features, batch]
+  data <- mx.symbol.swapaxes(data = encode, dim1 = 1, dim2 = 2)
   
+  # [seq, features, batch]
+  data <- conv_res_factory(data = data, depth = 1, kernel = 5, stride = 1, pad = 0, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 0, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 0, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 0, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  data <- conv_res_factory(data = data, depth = 1, kernel = 3, stride = 1, pad = 0, num_filter = num_hidden, out_proj = F, num_filter_proj = num_hidden)
+  
+  buffer <- mxnet:::mx.varg.symbol.internal.full(alist = list(shape = c(2, num_hidden, batch_size), value = 0))
+  data <- mx.symbol.concat(c(buffer, data), num.args = 2, dim = -1)
+  data <- mx.symbol.Convolution(data = data, kernel = 3, stride = 1, pad = 0, num_filter=num_hidden) %>% 
+    mx.symbol.BatchNorm() %>%
+    mx.symbol.relu()
   
   # if (masking) {
   #   data <- mx.symbol.broadcast_mul(data, seq_mask)

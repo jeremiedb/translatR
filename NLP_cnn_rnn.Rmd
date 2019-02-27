@@ -1,5 +1,5 @@
 ---
-title: "Translation with RNN"
+title: "Translation with CNN encoder and RNN decoder"
 output:
   html_document:
     theme: paper
@@ -33,8 +33,7 @@ source("R/metrics.R")
 ### Load buckets
 
 ```{r}
-buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
-# buckets <- s3readRDS(object = "translatR/data/euro/buckets_euro_en_fr_10_50.rds", bucket = "nimus-data")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v2.rds")
 ```
 
 
@@ -44,12 +43,12 @@ buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 256
+batch_size = 184
 num_embed = 512
 num_hidden = 512
-query_key_size = 256
+query_key_size = 512
 seq_len = 64
-num_rnn_layer = 3
+num_rnn_layer = 4
 num_proj_key = NULL
 ```
 
@@ -76,7 +75,9 @@ query = mx.symbol.Variable("query")
 query = mx.symbol.identity(query, name = "query")
 value = mx.symbol.Variable("value")
 
-attn <- attn_mlp(value = value, query_key_size = num_hidden, scale = T)
+# attn <- attn_mlp(value = value, query_key_size = num_hidden, scale = T)
+attn <- attn_dot(value = value, query_key_size = num_hidden, scale = T)
+
 init <- attn$init()
 attend <- attn$attend
 
@@ -94,11 +95,11 @@ graph.viz(attention, shape = list(query = c(num_hidden, batch_size),
 Attention functions return two functions:
 
 - an init() function to be called following the definition of the encoder so as to initialize the query, key and value components. 
- - attend() function to be called each time an attention query is performed during decoding. 
+- attend() function to be called each time an attention query is performed during decoding. 
 
 ```{r}
 # attn <- attn_dot(value = encode, query_key_size = num_hidden, scale = T)
-attn <- attn_dot(value = encode, query_key_size = query_key_size, scale = T)
+attn <- attn_dot(value = encode, query_key_size = query_key_size, scale = T, prefix = "attn")
 
 # no masking - handled implicitly thourgh the ignore label of softmax
 decode_teacher <- rnn.graph.unroll.decode(mode = "teacher", attn = attn, seq_len = seq_len, num_rnn_layer = num_rnn_layer, input_size = target_input_size, num_embed = num_embed, output_last_state = F, cell_type = "lstm", loss_output = "softmax", ignore_label = 0, masking = F, num_decode = target_input_size, num_hidden = num_hidden, dropout = 0.1, prefix = "decode_", label_name = "label")
@@ -124,12 +125,15 @@ table(arguments(decode_argmax) == arguments(decode_teacher))
 ### Prepare iterators 
 
 ```{r}
-mx.set.seed(44)
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data, label = buckets$buckets$`64`$label, batch.size = batch_size, shuffle = T)
 
-iter_train$reset()
-iter_train$iter.next()
-iter_data = iter_train$value()
+idx_tot <- sample(ncol(buckets$buckets$`64`$data), replace = F)
+idx_train <- idx_tot[1:as.integer(0.99 * length(idx_tot))]
+idx_eval <- setdiff(idx_tot, idx_train)
+
+mx.set.seed(44)
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_train], label = buckets$buckets$`64`$label[, idx_train], batch.size = batch_size, shuffle = T)
+iter_eval <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_eval], label = buckets$buckets$`64`$label[, idx_eval], batch.size = batch_size, shuffle = T)
+
 ```
 
 ```{r}
@@ -155,15 +159,11 @@ iter_data = iter_train$value()
 # ctx <- mx.cpu()
 ctx <- mx.gpu(0)
 
-initializer <- mx.init.Xavier(rnd_type = "gaussian", factor_type = "in", magnitude = 2.5)
+initializer <- mx.init.Xavier(rnd_type = "uniform", factor_type = "in", magnitude = 2.5)
 
-# optimizer <- mx.opt.create("rmsprop", learning.rate = 1e-3, gamma1 = 0.95, gamma2 = 0.95,
-#                            wd = 1e-5, clip_gradient = 1, rescale.grad=1)
-
-# optimizer <- mx.opt.create("adadelta", rho = 0.95, epsilon = 1e-8, wd = 1e-8,
-#                            clip_gradient = 1, rescale.grad=1)
-
-lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 5000, factor_val = 0.9, stop_factor_lr = 5e-5)
+lr_scheduler <- mx.lr_scheduler.FactorScheduler(step = 5000, 
+                                                factor_val = 0.9, 
+                                                stop_factor_lr = 5e-5)
 optimizer <- mx.opt.create("adam", learning.rate = 5e-4, beta1 = 0.9, beta2 = 0.999,
                            epsilon = 1e-8, wd = 1e-8,
                            clip_gradient = 1, rescale.grad = 1, lr_scheduler = lr_scheduler)
@@ -174,35 +174,36 @@ batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequ
 
 model <- mx.model.buckets(symbol = decode_teacher,
                           train.data = iter_train, 
-                          eval.data = NULL,
-                          num.round = 8, ctx = ctx, verbose = TRUE,
+                          eval.data = iter_eval,
+                          num.round = 12, ctx = ctx, verbose = TRUE,
                           metric = mx.metric.Perplexity, 
                           optimizer = optimizer,  initializer = initializer,
                           batch.end.callback = batch.end.callback, 
                           epoch.end.callback = epoch.end.callback)
 
-mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v1", iteration = 8)
-mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_cnn_rnn_argmax_v1.json")
+mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
+mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
 ```
 
 
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v1", iteration = 8)
-sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v1.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
 
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
 target_dic[, word_id_char := as.character(word_id)]
 setkeyv(source_dic, "word")
 setkeyv(target_dic, "word_id_char")
+seq_len <- 64
 ctx <- mx.cpu()
 
 model_infer <- list(symbol = sym_infer, arg.params = model$arg.params, aux.params = model$aux.params)
 model_infer <- structure(model_infer, class="MXFeedForwardModel")
 
-infer_helper <- function(infer_seq, model, source_dic, target_dic) {
+infer_helper <- function(infer_seq, model, source_dic, target_dic, seq_len) {
   
   infer_seq <- gsub(pattern = "([[:punct:]])", replacement = " \\1 ", x = infer_seq)
   infer_seq <- paste("<BOS>", infer_seq, "<EOS>")
@@ -211,7 +212,7 @@ infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   infer_seq <- data.table(infer_seq)
   infer_dt <- source_dic[infer_seq]
   
-  zeros <- matrix(0, nrow = 64, ncol = 1)
+  zeros <- matrix(0, nrow = seq_len, ncol = 1)
   data <- zeros
   data[1:length(infer_dt$word_id), 1] <- infer_dt$word_id
   
@@ -223,21 +224,54 @@ infer_helper <- function(infer_seq, model, source_dic, target_dic) {
   infer_nd <- mx.nd.array(infer_pred)
   infer_max <- as.array(mx.nd.argmax(infer_nd, axis = 1))
   
+  # index dictionary
   translation <- target_dic[as.character(infer_max)]
-  return(list(data = data, translation = translation))
+  
+  # assign seq position id
+  translation[, id := 1:seq_len]
+  translation[, seq_id := 1]
+  
+  # identify begining and end of sequence
+  translation[, EOS_id := which.max(word == "<EOS>"), by = seq_id]
+  translation[, EOS_id := ifelse(EOS_id > 1, EOS_id, 999L), by = seq_id]
+  translation[, .KEEP := id > 1 & id < EOS_id & word != "<UNKNOWN>"]
+  
+  translation <- translation[, .(agg = paste0(word, collapse = " ")), by = c("seq_id", ".KEEP")]
+  translation <- translation[order(seq_id, .KEEP)]
+  translation <- translation[, .(agg = last(agg)), by = seq_id]
+  translation <- translation$agg
+  
+  # Post processing
+  translation <- gsub(pattern = '\\s+', replacement = ' ', x = translation)
+  translation <- gsub(pattern = "\\s(\\.)", replacement = "\\1", x = translation)
+  translation <- gsub(pattern = "\\s(,)", replacement = "\\1", x = translation)
+  translation <- gsub(pattern = "\\s(;)", replacement = "\\1", x = translation)
+  translation <- gsub(pattern = "\\s(\\?)", replacement = "\\1", x = translation)
+  translation <- gsub(pattern = "\\s(\\!)", replacement = "\\1", x = translation)
+  translation <- gsub(pattern = "\\s(')\\s", replacement = "\\1", x = translation)
+  # translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
+  translation <- gsub(pattern = " \\( ", replacement = " \\(", x = translation)
+  translation <- gsub(pattern = " \\) ", replacement = "\\) ", x = translation)
+  translation <- gsub(pattern = "<UNKNOWN>", replacement = " ", x = translation)
+  
+  # return(list(data = data, translation = translation))
+  return(translation)
 }
 
 infer_helper(infer_seq = "Tomorrow I want to talk about the laws in the parliament.",
-             model = model_infer, source_dic = source_dic, target_dic = target_dic)
+             model = model_infer, source_dic = source_dic, target_dic = target_dic, seq_len = seq_len)
 
 infer_helper(infer_seq = "i am minister",
-             model = model_infer, source_dic = source_dic, target_dic = target_dic)
+             model = model_infer, source_dic = source_dic, target_dic = target_dic, seq_len = seq_len)
 
 infer_helper(infer_seq = "the union and the government",
-             model = model_infer, source_dic = source_dic, target_dic = target_dic)
+             model = model_infer, source_dic = source_dic, target_dic = target_dic, seq_len = seq_len)
 
 infer_helper(infer_seq = "That's what it is.",
-             model = model_infer, source_dic = source_dic, target_dic = target_dic)
+             model = model_infer, source_dic = source_dic, target_dic = target_dic, seq_len = seq_len)
+
+infer_helper(infer_seq = "I'd love to learn French!",
+             model = model_infer, source_dic = source_dic, target_dic = target_dic, seq_len = seq_len)
 
 ```
 
@@ -245,13 +279,13 @@ infer_helper(infer_seq = "That's what it is.",
 
 ```{r}
 ctx <- mx.gpu()
-bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64.rds")
-batch_size <- 32
+bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64_v2.rds")
+batch_size <- 128
 seq_len <- 64
 test_size <- ncol(bucket_test$buckets[[as.character(seq_len)]]$data)
 
-model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v1", iteration = 8)
-sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v1.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
 
 sym_infer$arguments
 
@@ -302,10 +336,11 @@ translation <- gsub(pattern = "\\s(;)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(\\?)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(\\!)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(')\\s", replacement = "\\1", x = translation)
-translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
+# translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
 translation <- gsub(pattern = " \\( ", replacement = " \\(", x = translation)
 translation <- gsub(pattern = " \\) ", replacement = "\\) ", x = translation)
+translation <- gsub(pattern = "<UNKNOWN>", replacement = " ", x = translation)
 
-write_lines(translation, path = "data/translation/wmt14_en_fr_rnn_cnn_v2.txt")
+write_lines(translation, path = "data/translation/wmt14_en_fr_cnn_rnn_v2.txt")
 ```
 

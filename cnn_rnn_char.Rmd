@@ -1,5 +1,5 @@
 ---
-title: "Translation with RNN"
+title: "Translation at character level - In Dev"
 output:
   html_document:
     theme: paper

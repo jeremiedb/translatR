@@ -9,14 +9,8 @@ editor_options:
 
 
 ```{r, message=FALSE, warning=FALSE}
-library(data.table)
 library(readr)
-library(mxnet)
-library(stringr)
-library(stringi)
-library(plotly)
-library(fst)
-# library(quanteda)
+library(data.table)
 ```
 
 
@@ -25,8 +19,11 @@ library(fst)
 Source: (http://www.statmt.org/wmt14/translation-task.html). 
 
 ```{r, eval=FALSE}
-# download.file(url = "http://www.statmt.org/europarl/v7/fr-en.tgz", destfile = "./data/europarl_fr-en.tgz")
-# untar(tarfile = "./data/europarl_fr-en.tgz", exdir = "./data/")
+download.file(url = "http://www.statmt.org/europarl/v7/fr-en.tgz", destfile = "./data/europarl_fr-en.tgz")
+untar(tarfile = "./data/europarl_fr-en.tgz", exdir = "./data/")
+
+download.file(url = "http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz", destfile = "./data/training-parallel-commoncrawl.tgz")
+untar(tarfile = "./data/training-parallel-commoncrawl.tgz", exdir = "./data/")
 ```
 
 
@@ -34,47 +31,35 @@ Source: (http://www.statmt.org/wmt14/translation-task.html).
 euro_en <- read_lines("data/europarl-v7.fr-en.en")
 euro_fr <- read_lines("data/europarl-v7.fr-en.fr")
 
-dev2008_en <- read_lines("data/dev/news-test2008.en")
-dev2008_fr <- read_lines("data/dev/news-test2008.fr")
-
-dev2009_en <- read_lines("data/dev/newstest2009.en")
-dev2009_fr <- read_lines("data/dev/newstest2009.fr")
-
-dev2010_en <- read_lines("data/dev/newstest2010.en")
-dev2010_fr <- read_lines("data/dev/newstest2010.fr")
-
-dev2011_en <- read_lines("data/dev/newstest2011.en")
-dev2011_fr <- read_lines("data/dev/newstest2011.fr")
-
-dev2012_en <- read_lines("data/dev/newstest2012.en")
-dev2012_fr <- read_lines("data/dev/newstest2012.fr")
-
-dev2013_en <- read_lines("data/dev/newstest2013.en")
-dev2013_fr <- read_lines("data/dev/newstest2013.fr")
-
 crawl_en <- read_lines("data/commoncrawl.fr-en.en")
 crawl_fr <- read_lines("data/commoncrawl.fr-en.fr")
+
+# dev2008_en <- read_lines("data/dev/news-test2008.en")
+# dev2008_fr <- read_lines("data/dev/news-test2008.fr")
+# 
+# dev2009_en <- read_lines("data/dev/newstest2009.en")
+# dev2009_fr <- read_lines("data/dev/newstest2009.fr")
+# 
+# dev2010_en <- read_lines("data/dev/newstest2010.en")
+# dev2010_fr <- read_lines("data/dev/newstest2010.fr")
+# 
+# dev2011_en <- read_lines("data/dev/newstest2011.en")
+# dev2011_fr <- read_lines("data/dev/newstest2011.fr")
+# 
+# dev2012_en <- read_lines("data/dev/newstest2012.en")
+# dev2012_fr <- read_lines("data/dev/newstest2012.fr")
+# 
+# dev2013_en <- read_lines("data/dev/newstest2013.en")
+# dev2013_fr <- read_lines("data/dev/newstest2013.fr")
 
 ```
 
 ```{r}
 raw_en <- c(euro_en,
-            crawl_en,
-            dev2008_en,
-            dev2009_en,
-            dev2010_en,
-            dev2011_en,
-            dev2012_en,
-            dev2013_en)
+            crawl_en)
 
 raw_fr <- c(euro_fr,
-            crawl_fr,
-            dev2008_fr,
-            dev2009_fr,
-            dev2010_fr,
-            dev2011_fr,
-            dev2012_fr,
-            dev2013_fr)
+            crawl_fr)
 
 length(raw_en) == length(raw_fr)
 shuffle <- sample(length(raw_en))
@@ -94,14 +79,6 @@ raw_fr <- raw_fr[shuffle]
 
 
 ```{r}
-raw_fr[1:10]
-fr_test <- gsub(pattern = "([[:punct:]])", replacement = " \\1 ", x = raw_fr[1:2])
-fr_test <- paste("<BOS>", fr_test, "<EOS>")
-stri_split(str = fr_test, regex = "\\s+")
-```
-
-
-```{r}
 corpus_pre_process <- function(source, 
                                target, 
                                min_seq_len, 
@@ -110,14 +87,6 @@ corpus_pre_process <- function(source,
                                max_seq_ratio = Inf,
                                word_count_min = 10, 
                                dic = NULL) {
-  
-  # do not convert to ascii because accented words will be split by the tokenizer
-  # head(raw_vec)
-  # raw_vec <-  ::stri_en   stri_enc_toascii(str = raw_vec)
-  
-  # string pre-process
-  # source <- stringi::stri_trans_tolower(source)
-  # target <- stringi::stri_trans_tolower(target)
   
   # split word with tild
   source <- gsub(pattern = "’", replacement = "'", x = source)
@@ -132,8 +101,8 @@ corpus_pre_process <- function(source,
   target <- paste("<BOS>", target, "<EOS>")
   
   # split raw sequence vectors into lists of word vectors (one list element per sequence)
-  source_word_vec_list <- stri_split(str = source, regex = "\\s+")
-  target_word_vec_list <- stri_split(str = target, regex = "\\s+")
+  source_word_vec_list <- strsplit(source, "\\s+")
+  target_word_vec_list <- strsplit(target, "\\s+")
   
   # number of entries per sequence
   source_seq_length <- sapply(source_word_vec_list, length)
@@ -178,24 +147,24 @@ corpus_pre_process <- function(source,
   if (is.null(dic)) {
     
     # count number of occurence of each word in the corpus
-    source_word_count = source_dt[, .N, by = word]
-    source_dic = source_word_count[N >= word_count_min,,][order(-N)]
+    source_word_count <- source_dt[, .N, by = word]
+    source_dic <- source_word_count[N >= word_count_min,,][order(-N)]
     
-    target_word_count = target_dt[, .N, by = word]
-    target_dic = target_word_count[N >= word_count_min,,][order(-N)]
+    target_word_count <- target_dt[, .N, by = word]
+    target_dic <- target_word_count[N >= word_count_min,,][order(-N)]
     
     # add special tokens for padding - unknown words and beginning/end of sequence
-    source_dic_words = c("<PAD>", "<UNKNOWN>", source_dic$word)
-    source_dic = data.table(word_id = 1:length(source_dic_words) - 1, word = source_dic_words)
+    source_dic_words <- c("<PAD>", "<UNKNOWN>", source_dic$word)
+    source_dic <- data.table(word_id = 1:length(source_dic_words) - 1, word = source_dic_words)
     setkeyv(source_dic, "word")
     
-    target_dic_words = c("<PAD>", "<UNKNOWN>", target_dic$word)
-    target_dic = data.table(word_id = 1:length(target_dic_words) - 1, word = target_dic_words)
+    target_dic_words <- c("<PAD>", "<UNKNOWN>", target_dic$word)
+    target_dic <- data.table(word_id = 1:length(target_dic_words) - 1, word = target_dic_words)
     setkeyv(target_dic, "word")
     
   } else {
-    source_dic = dic[["source_dic"]]
-    target_dic = dic[["target_dic"]]
+    source_dic <- dic[["source_dic"]]
+    target_dic <- dic[["target_dic"]]
   }
   
   # index dictionnary word_id on corpus - replace words not present in dic by <UNKNOWN> id
@@ -204,7 +173,7 @@ corpus_pre_process <- function(source,
   
   target_dt <- target_dic[target_dt][order(seq_id, seq_word_id)]
   target_dt <- setDT(target_dt)[is.na(word_id), word_id := 1L]
-
+  
   return(list(source_dt = source_dt, 
               source_seq_length = source_seq_length,
               target_dt = target_dt,
@@ -218,33 +187,18 @@ corpus_pre_process <- function(source,
 ```
 
 ```{r, eval = FALSE}
-# preprocess_full <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 4, max_seq_len = 48, word_count_min = 20, dic = NULL)
-# write_rds(preprocess_full, path = "data/preprocess_euro_en_fr_4_48.rds")
-# 
-# preprocess <- corpus_pre_process(source = raw_en, target = raw_fr, min_seq_len = 25, max_seq_len = 48, word_count_min = 20, dic = preprocess_full$dic)
-# write_rds(preprocess, path = "data/preprocess_euro_en_fr_25_48.rds")
-# rm(raw_en, raw_fr, preprocess_full, preprocess)
-# gc()
-
-# length 1644721
 preprocess <- corpus_pre_process(source = raw_en,
                                  target = raw_fr, 
                                  min_seq_len = 8, 
                                  max_seq_len = 64, 
                                  min_seq_ratio = 2/3, 
                                  max_seq_ratio = 3/2,
-                                 word_count_min = 100, 
+                                 word_count_min = 64,
                                  dic = NULL)
 
-chars <- stri_split_boundaries(preprocess$dic$target_dic$word, type = "character")
+chars <- strsplit(preprocess$dic$target_dic$word, "")
 chars <- unlist(chars)
 sort(unique(chars))
-
-write_rds(preprocess, path = "data/preprocess_wmt15_en_fr_8_64.rds")
-rm(preprocess)
-rm(raw_en)
-rm(raw_fr)
-gc()
 ```
 
 
@@ -273,13 +227,11 @@ create_buckets <- function(source, target,
 ```
 
 ```{r, eval = FALSE}
-preprocess <- read_rds(path = "data/preprocess_wmt15_en_fr_8_64.rds")
-
 buckets <- create_buckets(source = preprocess$source_dt, 
                           target = preprocess$target_dt,
                           source_dic = preprocess$dic$source_dic, 
                           target_dic = preprocess$dic$target_dic)
 
-write_rds(buckets, "data/buckets_wmt15_en_fr_8_64.rds")
+write_rds(buckets, "data/buckets_wmt15_en_fr_8_64_v2.rds")
 ```
 

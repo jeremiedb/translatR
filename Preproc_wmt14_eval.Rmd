@@ -58,10 +58,7 @@ corpus_pre_process <- function(source,
                                word_count_min = 10, 
                                dic = NULL) {
 
-  # string pre-process
-  # source <- stringi::stri_trans_tolower(source)
-  # target <- stringi::stri_trans_tolower(target)
-  
+  # split word with tild
   source <- gsub(pattern = "’", replacement = "'", x = source)
   target <- gsub(pattern = "’", replacement = "'", x = target)
   
@@ -74,8 +71,8 @@ corpus_pre_process <- function(source,
   target <- paste("<BOS>", target, "<EOS>")
   
   # split raw sequence vectors into lists of word vectors (one list element per sequence)
-  source_word_vec_list <- stri_split(str = source, regex = "\\s+")
-  target_word_vec_list <- stri_split(str = target, regex = "\\s+")
+  source_word_vec_list <- strsplit(source, "\\s+")
+  target_word_vec_list <- strsplit(target, "\\s+")
   
   # number of entries per sequence
   source_seq_length <- sapply(source_word_vec_list, length)
@@ -161,7 +158,7 @@ corpus_pre_process <- function(source,
 ```{r, eval = FALSE}
 
 # load predefined Dict
-buckets <- read_rds("data/buckets_wmt15_en_fr_8_64.rds")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v2.rds")
 dic <- list(source_dic = buckets$source_dic,
             target_dic = buckets$target_dic)
 
@@ -222,6 +219,6 @@ label[1:64,] <- buckets$buckets$`64`$label[1:64,]
 buckets$buckets$`64`$data <- data
 buckets$buckets$`64`$label <- label
 
-write_rds(buckets, "data/buckets_wmt14_eval_en_fr_64.rds")
+write_rds(buckets, "data/buckets_wmt14_eval_en_fr_64_v2.rds")
 ```
 
