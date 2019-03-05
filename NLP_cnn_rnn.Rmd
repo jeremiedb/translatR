@@ -33,7 +33,7 @@ source("R/metrics.R")
 ### Load buckets
 
 ```{r}
-buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v2.rds")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v3.rds")
 ```
 
 
@@ -43,7 +43,7 @@ buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v2.rds")
 source_input_size = nrow(buckets$source_dic)
 target_input_size = nrow(buckets$target_dic)
 
-batch_size = 184
+batch_size = 128
 num_embed = 512
 num_hidden = 512
 query_key_size = 512
@@ -98,7 +98,6 @@ Attention functions return two functions:
 - attend() function to be called each time an attention query is performed during decoding. 
 
 ```{r}
-# attn <- attn_dot(value = encode, query_key_size = num_hidden, scale = T)
 attn <- attn_dot(value = encode, query_key_size = query_key_size, scale = T, prefix = "attn")
 
 # no masking - handled implicitly thourgh the ignore label of softmax
@@ -131,25 +130,9 @@ idx_train <- idx_tot[1:as.integer(0.99 * length(idx_tot))]
 idx_eval <- setdiff(idx_tot, idx_train)
 
 mx.set.seed(44)
-iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_train], label = buckets$buckets$`64`$label[, idx_train], batch.size = batch_size, shuffle = T)
-iter_eval <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_eval], label = buckets$buckets$`64`$label[, idx_eval], batch.size = batch_size, shuffle = T)
+iter_train <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_train], label = buckets$buckets$`64`$label[, idx_train], batch.size = batch_size, shuffle = F)
+iter_eval <- mx.io.arrayiter(data = buckets$buckets$`64`$data[, idx_eval], label = buckets$buckets$`64`$label[, idx_eval], batch.size = batch_size, shuffle = F)
 
-```
-
-```{r}
-# perplexity jumps in the last records - to be investigated
-# 1 248 000 - 1 251 200
-# potential buggy records between 1 270 400 and 1 272 000 and 1 280 000 and 1 283 200
-# dim(buckets$buckets$`50`$data[, -(1248000:1272000)])
-# dim(buckets$buckets$`50`$label[, -(1248000:1272000)])
-# iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data[, -(1248000:1272000)], label = buckets$buckets$`50`$label[, -(1248000:1272000)], batch.size = batch_size, shuffle = F)
-
-# iter_train <- mx.io.arrayiter(data = buckets$buckets$`50`$data[, 1:1000000], label = buckets$buckets$`50`$label[, 1:1000000], batch.size = batch_size, shuffle = T)
-# 
-# iter_train$reset()
-# iter_train$iter.next()
-# iter_data = iter_train$value()
-# dim(iter_data$label)
 ```
 
 
@@ -175,22 +158,22 @@ batch.end.callback <- mx.callback.log.speedometer(batch.size = batch_size, frequ
 model <- mx.model.buckets(symbol = decode_teacher,
                           train.data = iter_train, 
                           eval.data = iter_eval,
-                          num.round = 12, ctx = ctx, verbose = TRUE,
+                          num.round = 8, ctx = ctx, verbose = TRUE,
                           metric = mx.metric.Perplexity, 
                           optimizer = optimizer,  initializer = initializer,
                           batch.end.callback = batch.end.callback, 
                           epoch.end.callback = epoch.end.callback)
 
-mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
-mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
+mx.model.save(model = model, prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v3", iteration = 8)
+mx.symbol.save(symbol = decode_argmax, filename = "models/model_wmt15_en_fr_cnn_rnn_argmax_v3.json")
 ```
 
 
 ## Inference
 
 ```{r}
-model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
-sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v3", iteration = 8)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v3.json")
 
 source_dic <- buckets$source_dic
 target_dic <- buckets$target_dic
@@ -279,13 +262,13 @@ infer_helper(infer_seq = "I'd love to learn French!",
 
 ```{r}
 ctx <- mx.gpu()
-bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64_v2.rds")
+bucket_test <- read_rds("data/buckets_wmt14_eval_en_fr_64_v3.rds")
 batch_size <- 128
 seq_len <- 64
 test_size <- ncol(bucket_test$buckets[[as.character(seq_len)]]$data)
 
-model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v2", iteration = 12)
-sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v2.json")
+model <- mx.model.load(prefix = "models/model_wmt15_en_fr_cnn_rnn_teacher_v3", iteration = 8)
+sym_infer <- mx.symbol.load(file.name = "models/model_wmt15_en_fr_cnn_rnn_argmax_v3.json")
 
 sym_infer$arguments
 
@@ -336,11 +319,11 @@ translation <- gsub(pattern = "\\s(;)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(\\?)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(\\!)", replacement = "\\1", x = translation)
 translation <- gsub(pattern = "\\s(')\\s", replacement = "\\1", x = translation)
-# translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
+translation <- gsub(pattern = "\\s(-)\\s", replacement = "\\1", x = translation)
 translation <- gsub(pattern = " \\( ", replacement = " \\(", x = translation)
 translation <- gsub(pattern = " \\) ", replacement = "\\) ", x = translation)
 translation <- gsub(pattern = "<UNKNOWN>", replacement = " ", x = translation)
 
-write_lines(translation, path = "data/translation/wmt14_en_fr_cnn_rnn_v2.txt")
+write_lines(translation, path = "data/translation/wmt15_en_fr_cnn_rnn_v3.txt")
 ```
 

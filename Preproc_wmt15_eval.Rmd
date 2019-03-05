@@ -158,7 +158,7 @@ corpus_pre_process <- function(source,
 ```{r, eval = FALSE}
 
 # load predefined Dict
-buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v2.rds")
+buckets <- read_rds("data/buckets_wmt15_en_fr_8_64_v3.rds")
 dic <- list(source_dic = buckets$source_dic,
             target_dic = buckets$target_dic)
 
@@ -219,6 +219,6 @@ label[1:64,] <- buckets$buckets$`64`$label[1:64,]
 buckets$buckets$`64`$data <- data
 buckets$buckets$`64`$label <- label
 
-write_rds(buckets, "data/buckets_wmt15_eval_en_fr_64_v2.rds")
+write_rds(buckets, "data/buckets_wmt15_eval_en_fr_64_v3.rds")
 ```
 

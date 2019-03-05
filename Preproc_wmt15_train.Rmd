@@ -24,6 +24,10 @@ untar(tarfile = "./data/europarl_fr-en.tgz", exdir = "./data/")
 
 download.file(url = "http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz", destfile = "./data/training-parallel-commoncrawl.tgz")
 untar(tarfile = "./data/training-parallel-commoncrawl.tgz", exdir = "./data/")
+
+download.file(url = "http://www.statmt.org/wmt10/training-giga-fren.tar", destfile = "./data/training-giga-fren.tar")
+untar(tarfile = "./data/training-giga-fren.tar", exdir = "./data/")
+untar(tarfile = "./data/giga-fren.release2.fixed.en.gz", exdir = "./data/")
 ```
 
 
@@ -33,6 +37,12 @@ euro_fr <- read_lines("data/europarl-v7.fr-en.fr")
 
 crawl_en <- read_lines("data/commoncrawl.fr-en.en")
 crawl_fr <- read_lines("data/commoncrawl.fr-en.fr")
+
+giga_en <- read_lines("data/giga-fren.release2.fixed.en.gz")
+giga_fr <- read_lines("data/giga-fren.release2.fixed.fr.gz")
+
+giga_en <- giga_en[1:6e6]
+giga_fr <- giga_fr[1:6e6]
 
 # dev2008_en <- read_lines("data/dev/news-test2008.en")
 # dev2008_fr <- read_lines("data/dev/news-test2008.fr")
@@ -56,16 +66,26 @@ crawl_fr <- read_lines("data/commoncrawl.fr-en.fr")
 
 ```{r}
 raw_en <- c(euro_en,
-            crawl_en)
+            crawl_en,
+            giga_en)
 
 raw_fr <- c(euro_fr,
-            crawl_fr)
+            crawl_fr,
+            giga_fr)
 
 length(raw_en) == length(raw_fr)
 shuffle <- sample(length(raw_en))
 
 raw_en <- raw_en[shuffle]
 raw_fr <- raw_fr[shuffle]
+
+rm(euro_en,
+   crawl_en,
+   giga_en,
+   euro_fr,
+   crawl_fr,
+   giga_fr)
+gc()
 ```
 
 
@@ -193,7 +213,7 @@ preprocess <- corpus_pre_process(source = raw_en,
                                  max_seq_len = 64, 
                                  min_seq_ratio = 2/3, 
                                  max_seq_ratio = 3/2,
-                                 word_count_min = 64,
+                                 word_count_min = 100,
                                  dic = NULL)
 
 chars <- strsplit(preprocess$dic$target_dic$word, "")
@@ -232,6 +252,6 @@ buckets <- create_buckets(source = preprocess$source_dt,
                           source_dic = preprocess$dic$source_dic, 
                           target_dic = preprocess$dic$target_dic)
 
-write_rds(buckets, "data/buckets_wmt15_en_fr_8_64_v2.rds")
+write_rds(buckets, "data/buckets_wmt15_en_fr_8_64_v3.rds")
 ```
 
