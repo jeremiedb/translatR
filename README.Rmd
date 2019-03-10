@@ -10,9 +10,9 @@ Inspiration taken from the [AWS Sockeye](https://github.com/awslabs/sockeye) pro
 
 ## Getting started
 
-Prepare data using WMT Europarl using `Preproc_euro.Rmd`. Creates a source and target matrix of word indices along with the associated dictionary. Data preparation mainly relying on `data.table` and `stringi` packages. 
+Prepare data using WMT datasets using `Preproc_wmt15_train.Rmd`. Creates a source and target matrix of word indices along with the associated dictionary. Data preparation mainly relies on `data.table` package. 
 
-A RNN encoder-decoder training demo is provided in `NLP_rnn.Rmd` and and CNN-RNN architecture is shown in `NLP_cnn_rnn.Rmd`. 
+A RNN encoder-decoder training demo is provided in `NMT_rnn_rnn.Rmd` and and CNN-RNN architecture is shown in `NMT_cnn_rnn.Rmd`. 
 
 ## Performance
 
@@ -21,6 +21,8 @@ Performance during training is tracked using the perplexity metric. Once a train
 For example: 
 
 `cat data/trans_test_wmt_en_fr_rnn_72_Capital.txt | sacrebleu -t wmt14 -l en-fr`
+
+A BLEU score of 28.2 was obtained with the CNN-RNN architecture. 
 
 ## Features: 
 
