@@ -38,11 +38,11 @@ euro_fr <- read_lines("data/europarl-v7.fr-en.fr")
 crawl_en <- read_lines("data/commoncrawl.fr-en.en")
 crawl_fr <- read_lines("data/commoncrawl.fr-en.fr")
 
-giga_en <- read_lines("data/giga-fren.release2.fixed.en.gz")
-giga_fr <- read_lines("data/giga-fren.release2.fixed.fr.gz")
-
-giga_en <- giga_en[1:6e6]
-giga_fr <- giga_fr[1:6e6]
+# giga_en <- read_lines("data/giga-fren.release2.fixed.en.gz")
+# giga_fr <- read_lines("data/giga-fren.release2.fixed.fr.gz")
+# 
+# giga_en <- giga_en[1:6e6]
+# giga_fr <- giga_fr[1:6e6]
 
 # dev2008_en <- read_lines("data/dev/news-test2008.en")
 # dev2008_fr <- read_lines("data/dev/news-test2008.fr")
@@ -66,12 +66,12 @@ giga_fr <- giga_fr[1:6e6]
 
 ```{r}
 raw_en <- c(euro_en,
-            crawl_en,
-            giga_en)
+            crawl_en)
+            # giga_en)
 
 raw_fr <- c(euro_fr,
-            crawl_fr,
-            giga_fr)
+            crawl_fr)
+            # giga_fr)
 
 length(raw_en) == length(raw_fr)
 shuffle <- sample(length(raw_en))
@@ -213,7 +213,7 @@ preprocess <- corpus_pre_process(source = raw_en,
                                  max_seq_len = 64, 
                                  min_seq_ratio = 2/3, 
                                  max_seq_ratio = 3/2,
-                                 word_count_min = 100,
+                                 word_count_min = 50,
                                  dic = NULL)
 
 chars <- strsplit(preprocess$dic$target_dic$word, "")
@@ -252,6 +252,6 @@ buckets <- create_buckets(source = preprocess$source_dt,
                           source_dic = preprocess$dic$source_dic, 
                           target_dic = preprocess$dic$target_dic)
 
-write_rds(buckets, "data/buckets_wmt15_en_fr_8_64_v3.rds")
+write_rds(buckets, "data/buckets_wmt15_en_fr_8_64_v2.rds")
 ```
 

@@ -3,7 +3,6 @@
 #' 
 #' @export
 rnn.graph.unroll.decode <- function(mode = "train",
-                                    encode,
                                     num_rnn_layer, 
                                     attn,
                                     seq_len, 
@@ -18,6 +17,7 @@ rnn.graph.unroll.decode <- function(mode = "train",
                                     cell_type = "lstm", 
                                     masking = F, 
                                     output_last_state = F,
+                                    residual = T,
                                     prefix = "",
                                     label_name = "label") {
   
@@ -98,7 +98,6 @@ rnn.graph.unroll.decode <- function(mode = "train",
     cell.symbol <- light.cell
   }
   
-  
   # set label
   label <- mx.symbol.Variable(label_name)
   
@@ -110,7 +109,7 @@ rnn.graph.unroll.decode <- function(mode = "train",
   data_feed <- mx.symbol.slice_axis(label, axis = 1, begin = 0, end = 1, name = paste0(prefix, "data_ini"))
   data_feed <- mx.symbol.reshape(data = data_feed, shape = -1)
   data_feed <- mx.symbol.Embedding(data = data_feed, input_dim = 1, weight = embed_ini_weight, 
-                                    output_dim =  2 * num_hidden, name = paste0(prefix, "embed_ini"))
+                                   output_dim =  3*num_hidden, name = paste0(prefix, "embed_ini"))
   
   if (masking) {
     seq.mask <- mxnet:::mx.varg.symbol.internal.not_equal_scalar(alist = list(data=label, scalar = 0))
@@ -130,11 +129,11 @@ rnn.graph.unroll.decode <- function(mode = "train",
     
     hidden <- data_feed
     
-    ### Attention
-    # ctx_vector <- attn$attend_in(query = hidden, key = attn_init$key, value = attn_init$value, attn_init = attn_init)
+    # ### Attention
+    # ctx_vector <- attn$attend(query = data_feed, key = attn_init$key, value = attn_init$value, length = attn_init$length, attn_init = attn_init)
     # # combine context vector with last hidden to form the attn vector
-    # ctx_hidden <- mx.symbol.concat(data = c(hidden, ctx_vector), num.args = 2, dim = -1)
-    # hidden <- mx.symbol.FullyConnected(data = ctx_hidden, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>%
+    # hidden <- mx.symbol.concat(data = c(data_feed, ctx_vector), num.args = 2, dim = -1)
+    # hidden <- mx.symbol.FullyConnected(data = hidden, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>%
     #   mx.symbol.tanh()
     
     for (i in 1:num_rnn_layer) {
@@ -150,12 +149,12 @@ rnn.graph.unroll.decode <- function(mode = "train",
                                 layeridx = i,
                                 dropout = dropout,
                                 prefix = prefix)
-      hidden <- next.state$h
+      if (residual & i > 1) hidden <- hidden + next.state$h else hidden <- next.state$h
       last.states[[i]] <- next.state
     }
     
     ### Attention
-    ctx_vector <- attn$attend(query = hidden, key = attn_init$key, value = attn_init$value, attn_init = attn_init)
+    ctx_vector <- attn$attend(query = hidden, key = attn_init$key, value = attn_init$value, length = attn_init$length, attn_init = attn_init)
     # combine context vector with last hidden to form the attn vector
     ctx_hidden <- mx.symbol.concat(data = c(hidden, ctx_vector), num.args = 2, dim = -1)
     attention <- mx.symbol.FullyConnected(data = ctx_hidden, num_hidden = num_hidden, weight=attn.weight, bias=attn.bias, no_bias=F) %>%
@@ -190,7 +189,8 @@ rnn.graph.unroll.decode <- function(mode = "train",
       } else if (mode == "attention") {
         sample <- attention
       }
-      data_feed <- mx.symbol.concat(data = c(hidden, sample), num.args = 2, dim = -1)
+      data_feed <- mx.symbol.concat(data = c(ctx_hidden, sample), num.args = 2, dim = -1)
+      # data_feed <- sample
     }
   }
   
